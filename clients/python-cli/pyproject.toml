@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ocr-client"
+version = "0.2.0"
+description = "Unlimited-OCR LAN gateway client (CLI + importable library)"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    {name = "Unlimited-OCR fork"},
+]
+dependencies = [
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+rich = ["rich>=13.7"]
+dev = ["ruff", "mypy"]
+
+[project.scripts]
+ocr-client = "ocr_client.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ocr_client"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/ocr_client",
+    "README.md",
+    "pyproject.toml",
+]
+exclude = [
+    ".venv*",
+    "dist",
+    "build",
+    "*.egg-info",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+]

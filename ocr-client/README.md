@@ -8,6 +8,16 @@
 
 > CLI 客户端 for Unlimited-OCR 局域网服务。装在笔记本上,一行命令上传 PDF 到 GPU 服务器并取回结果。
 
+## 0. 架构说明（2026-06-26 更新）
+
+`ocr-client/` 这个目录现在是一个**构建产物占位符**，不是源码。
+
+- **真实源码**：[`clients/python-cli/src/ocr_client/`](https://github.com/anomalyco/opencode/tree/main/Unlimited-OCR/clients/python-cli/src/ocr_client)（一份代码、单一来源、可以 `pip install -e` 开发模式使用）
+- **本目录的作用**：把上面的源码打成 wheel 放进 `ocr-client/dist/`，方便那些不 clone 整个仓库、只想 `uv tool install ./ocr-client` 装一个 wheel 的用户
+- **打包方式**：`bash scripts/build_ocr_client.sh`（idempotent，重跑会覆盖）
+
+> 如果你是开发者，请直接 `pip install -e clients/python-cli/[rich]`，**不要**碰这个目录。
+
 ## 1. 这是什么
 
 `ocr-client` 是 [`Unlimited-OCR` 仓库](https://github.com/anomalyco/opencode/tree/main/Unlimited-OCR) 里 `server.py` 网关的独立客户端包。打包后可以单独分发,不需要 clone 整个仓库,不需要 GPU,只需要 `python` 和 `requests`(可选 `rich` 增强体验)。
