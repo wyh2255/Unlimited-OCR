@@ -13,7 +13,7 @@
 | Role | Listen address | Port |
 |------|----------------|------|
 | FastAPI gateway | `0.0.0.0` | `10001` |
-| SGLang inference | `0.0.0.0` | `10000` (started internally by `infer.py` / `gateway.server`) |
+| SGLang inference | `0.0.0.0` | `10000` (started internally by `inference/batch.py`) |
 
 Health check: `GET /api/v1/health` returns 200 with a body containing GPU info. All other endpoints require auth.
 

@@ -38,8 +38,8 @@ The **fork-specific additions** live in the rest of the repo and are documented 
 
 | Addition | What it does | Where to start |
 |----------|--------------|----------------|
-| LAN HTTP gateway | Serve the model over the network so multiple laptops can share one GPU | `python server.py --port 10001` (see [`README_API.md`](README_API.md) 中文) |
-| CLI client | Talk to the gateway from a laptop that has no GPU | `python client.py upload my.pdf --watch` |
+| LAN HTTP gateway | Serve the model over the network so multiple laptops can share one GPU | `python -m gateway.server --port 10001` (see [`README_API.md`](README_API.md) 中文) |
+| CLI client | Talk to the gateway from a laptop that has no GPU | `ocr-client upload my.pdf --watch` (或 `python -m ocr_client`) |
 | Browser frontend | Vue 3 SPA for non-technical users | `cd web && pnpm dev` (see [`web/README.md`](web/README.md) 中文) |
 | `ocr-client` pip package | Pre-bundled version of the CLI for `uv tool install` / `pipx install` | `uv tool install ./ocr-client` (see [`ocr-client/README.md`](ocr-client/README.md) 中文) |
 | Architecture overview | How the 4 paths relate | [`docs/architecture.md`](docs/architecture.md) |
@@ -264,17 +264,17 @@ generate("Multi page parsing.", ["page1.png", "page2.png"], image_mode="base", n
 generate("Multi page parsing.", pdf_to_images("your_doc.pdf", dpi=300), image_mode="base", ngram_window=1024)
 ```
 
-For batch inference, `infer.py` starts the SGLang server automatically and sends concurrent requests for an image directory or PDF:
+For batch inference, `inference/cli.py` starts the SGLang server automatically and sends concurrent requests for an image directory or PDF:
 ```shell
 # Image directory
-python infer.py \
+python -m inference.cli \
     --image_dir ./examples/images \
     --output_dir ./outputs \
     --concurrency 8 \
     --image_mode gundam
 
 # PDF pages
-python infer.py \
+python -m inference.cli \
     --pdf ./examples/document.pdf \
     --output_dir ./outputs \
     --concurrency 8 \

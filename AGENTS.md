@@ -21,11 +21,11 @@ High-signal facts for working in this repo. See `CLAUDE.md` for command snippets
 
 | File | Purpose |
 |------|---------|
-| `infer.py` | SGLang batch CLI: starts server, fans out concurrent requests for an image dir or PDF. Also exports `run_inference(*, pdf, output_dir, concurrency, model_dir, gpu, image_mode, server_log) -> dict` for programmatic use. `run()` returns `{output_dir, request_count, successful, total_tokens, wall_time}`. |
-| `ocr_pdf.py` | Transformers direct: PDF → OCR → single `result.md`. Supports `--no-page-split` to remove `<PAGE>` separators. |
-| `postprocess_sglang.py` | Clean up raw SGLang output: strips `<|det|>` bbox tags, crops embedded images from PDF, merges per-page files into one `result.md`. |
-| `server.py` | FastAPI gateway (LAN service): wraps the SGLang path behind HTTP for remote clients. Listens on `:10001`, single-task FIFO worker queue, Bearer-token auth, GPU-aware concurrency auto-tiering, CORS middleware for browser clients. |
-| `client.py` | CLI client for `server.py` (works on any LAN host, no GPU required): subcommands `upload` / `status` / `download` / `delete` / `health`. Optional `rich` for progress bars, falls back to plain text. |
+| `inference/cli.py` / `inference/batch.py` | SGLang batch CLI: starts server, fans out concurrent requests for an image dir or PDF. Exports `run_inference(*, pdf, output_dir, concurrency, model_dir, gpu, image_mode, server_log) -> dict` for programmatic use. |
+| `model/ocr_pdf.py` | Transformers direct: PDF → OCR → single `result.md`. Supports `--no-page-split` to remove `<PAGE>` separators. |
+| `inference/postprocess.py` | Clean up raw SGLang output: strips `<|det|>` bbox tags, crops embedded images from PDF, merges per-page files into one `result.md`. |
+| `gateway/server.py` | FastAPI gateway (LAN service): wraps the SGLang path behind HTTP for remote clients. Listens on `:10001`, single-task FIFO worker queue, Bearer-token auth, GPU-aware concurrency auto-tiering, CORS middleware for browser clients. |
+| `clients/python-cli/src/ocr_client/cli.py` | CLI client for the gateway (works on any LAN host, no GPU required): subcommands `upload` / `status` / `download` / `delete` / `health`. Optional `rich` for progress bars, falls back to plain text. |
 | `web/` | Browser frontend for the LAN service: Vue 3 + Vite + TypeScript SPA. Three tabs (upload / task list / result viewer), drag-drop PDF upload, live polling, on-line Markdown + image preview. |
 | `API_CONTRACT.md` | Single source of truth for HTTP contract: endpoints, request/response shapes, error codes, directory layout, GPU tier table. Server and client must match this. |
 | `README_API.md` | User-facing manual for the LAN service: install, launch, CLI examples, API reference, FAQ. |
@@ -46,11 +46,11 @@ The SGLang processor (not the model code itself) defines **5 presets** — `AGEN
 | `large` | `base_size=1280, image_size=1280, crop_mode=False` | single images only |
 | `gundam` | `base_size=1024, image_size=640, crop_mode=True` | single images only |
 
-Multi-image / PDF must use `tiny`, `small`, or `base` (others raise `ValueError` in the processor). `infer.py` only exposes `gundam` and `base` in `--image_mode` argparse choices; the LAN service (`server.py`) only accepts these two via the HTTP API and **silently coerces `gundam` PDFs to `base`**.
+Multi-image / PDF must use `tiny`, `small`, or `base` (others raise `ValueError` in the processor). `inference/cli.py` only exposes `gundam` and `base` in `--image_mode` argparse choices; the LAN service (`gateway/server.py`) only accepts these two via the HTTP API and **silently coerces `gundam` PDFs to `base`**.
 
 ## Repetition Suppression
 
-`no_repeat_ngram_size=35` with `ngram_window=128` (single image) / `1024` (multi-page/PDF). SGLang server requires `--enable-custom-logit-processor` for this to work. `infer.py` and `ocr_pdf.py` set these defaults automatically.
+`no_repeat_ngram_size=35` with `ngram_window=128` (single image) / `1024` (multi-page/PDF). SGLang server requires `--enable-custom-logit-processor` for this to work. `inference/cli.py` and `model/ocr_pdf.py` set these defaults automatically.
 
 ## Setup
 
@@ -68,7 +68,7 @@ uv pip install kernels==0.11.7 pymupdf==1.27.2.2
 ruff check .   # lint
 black .        # format
 isort .        # sort imports
-mypy infer.py  # type check
+mypy inference/cli.py  # type check
 ```
 
 No CI workflows found.
@@ -80,10 +80,10 @@ For maximum throughput on PDFs, run SGLang batch then post-process:
 ```bash
 # 1. Concurrent OCR (8 pages at once)
 CUDA_HOME=$(python -c "import torch; import os; print(os.path.dirname(torch.__file__))/cuda") \
-python infer.py --pdf doc.pdf --concurrency 8 --image_mode base --model_dir ./Unlimited-OCR
+python -m inference.cli --pdf doc.pdf --concurrency 8 --image_mode base --model_dir ./Unlimited-OCR
 
 # 2. Clean up raw output into single result.md with embedded images
-python postprocess_sglang.py --pdf doc.pdf --input_dir ./outputs --output_dir ./outputs_clean
+python -m inference.postprocess --pdf doc.pdf --input_dir ./outputs --output_dir ./outputs_clean
 ```
 
 This is ~8× faster than the single-threaded Transformers path.
@@ -93,17 +93,17 @@ This is ~8× faster than the single-threaded Transformers path.
 - `session.trust_env = False` when sending requests to SGLang from Python (avoids proxy interference).
 - PDF preprocessing: PyMuPDF at 300 DPI (`Matrix(300/72, 300/72)`), rendered to PNG in a temp dir.
 - Prompt must contain the literal token `<image>` where image embeddings will be spliced in.
-- `ocr_pdf.py` saves a single `result.md` file with `<PAGE>` separators between pages; use `--no-page-split` to merge.
+- `model/ocr_pdf.py` saves a single `result.md` file with `<PAGE>` separators between pages; use `--no-page-split` to merge.
 - The bundled SGLang wheel is patched for this model's custom logit processor. Never replace it with a standard sglang from PyPI.
-- SGLang server requires `CUDA_HOME` (e.g. to PyTorch's cuda dir) and `--trust-remote-code` and `--disable-cuda-graph` flags. `infer.py` handles these if the env var is set.
-- `postprocess_sglang.py` re-renders the PDF at 300 DPI to crop embedded images from bounding boxes. Requires the original PDF file.
+- SGLang server requires `CUDA_HOME` (e.g. to PyTorch's cuda dir) and `--trust-remote-code` and `--disable-cuda-graph` flags. `inference/cli.py` handles these if the env var is set.
+- `inference/postprocess.py` re-renders the PDF at 300 DPI to crop embedded images from bounding boxes. Requires the original PDF file.
 - Context length: 32768 tokens.
 
-## LAN Service (`server.py` + `client.py`)
+## LAN Service (`gateway/server.py` + `clients/python-cli/`)
 
 A third inference path was added on top of the two above:
 
-3. **FastAPI HTTP gateway (LAN)** — `python server.py --port 10001`. Receives PDFs over the network, dispatches them to a single FIFO worker thread that calls `run_inference()` (path #2), then `postprocess_sglang.py`, then zips the result. The client (`client.py`) is a pure HTTP CLI that can run on any LAN host with no GPU.
+3. **FastAPI HTTP gateway (LAN)** — `python -m gateway.server --port 10001`. Receives PDFs over the network, dispatches them to a single FIFO worker thread that calls `run_inference()` (path #2), then `inference.postprocess`, then zips the result. The client (`ocr-client`) is a pure HTTP CLI that can run on any LAN host with no GPU.
 
 **Ports**:
 
@@ -115,7 +115,7 @@ A third inference path was added on top of the two above:
 
 **Auth**: Bearer token from `OCR_API_TOKEN` env var. If unset, server generates `secrets.token_urlsafe(24)` and prints it once at startup. All endpoints except `GET /api/v1/health` require it. Token compared with `secrets.compare_digest`.
 
-**GPU auto-tiering** (`server.py:detect_concurrency`): `nvidia-smi` is queried right before each task starts.
+**GPU auto-tiering** (`gateway/concurrency.py:detect_concurrency`): `nvidia-smi` is queried right before each task starts.
 
 | Free GPU memory | Concurrency |
 |---|---|
@@ -131,18 +131,18 @@ Users can override per-task with `concurrency_hint` (1..16). The detected value 
 
 **Smoke test result** (recorded 2026-06-26): all 10 contract assertions pass — health, 401 on no/bad token, 400 on non-PDF, 202 + task_id on real PDF upload, status reads running with correct `total_pages` / `concurrency`, 404 on premature download, all 5 client subcommands work.
 
-**CORS** (added 2026-06-26, `server.py:42, 161-176, 451-466`): Browser clients need cross-origin access. `server.py` installs `fastapi.middleware.cors.CORSMiddleware` and exposes a `--cors-origin` CLI flag (repeatable, default `["*"]` for LAN). The middleware is installed *after* `app` is constructed, via a `configure_cors(origins)` helper that wipes any previous CORS entries from `app.user_middleware` first — this is required because `CORSMiddleware` cannot be added to an already-running app the normal way without a stack rebuild. Startup logs `CORS allow_origins=...`. `expose_headers=["Content-Disposition"]` so the browser JS can read the suggested ZIP filename.
+**CORS** (added 2026-06-26, `gateway/server.py:42, 161-176, 451-466`): Browser clients need cross-origin access. `gateway/auth.py` installs `fastapi.middleware.cors.CORSMiddleware` and exposes a `--cors-origin` CLI flag (repeatable, default `["*"]` for LAN). The middleware is installed *after* `app` is constructed, via a `configure_cors(origins)` helper that wipes any previous CORS entries from `app.user_middleware` first — this is required because `CORSMiddleware` cannot be added to an already-running app the normal way without a stack rebuild. Startup logs `CORS allow_origins=...`. `expose_headers=["Content-Disposition"]` so the browser JS can read the suggested ZIP filename.
 
 **Quirks** specific to the LAN path:
 
 - `gundam` uploaded via HTTP for a PDF is silently coerced to `base` (the API response echoes the actually-used mode, not the requested one).
 - The `/health` endpoint shells out to `nvidia-smi` on every request (~100ms). Fine for a LAN user, cache later if traffic grows.
 - `concurrency` field in the status object is `0` while the task is `queued` (resolved only at `running` time). Don't show it in pre-flight UI.
-- `client.py` watch mode does not catch HTTP 4xx/5xx in `_fetch_status`; RuntimeError will escape and abort the watch. Acceptable because a 4xx during watch usually means the task_id is wrong and the user should restart.
+- `ocr-client` watch mode does not catch HTTP 4xx/5xx in `_fetch_status`; RuntimeError will escape and abort the watch. Acceptable because a 4xx during watch usually means the task_id is wrong and the user should restart.
 
 ## Web Frontend (`web/`)
 
-A fourth entrypoint was added on top of the LAN service: a browser SPA that talks to `server.py` over HTTP, mirroring every `client.py` subcommand with an on-line Markdown + image preview. Lives in the `feature/web-frontend` branch.
+A fourth entrypoint was added on top of the LAN service: a browser SPA that talks to `gateway/server.py` over HTTP, mirroring every `ocr-client` subcommand with an on-line Markdown + image preview. Lives in `clients/web/`.
 
 **Stack**: Vue 3 (`<script setup>`) + TypeScript + Vite 6. No Tailwind / no UI lib — design tokens in `web/src/styles/main.css` match the CLAUDE.md palette (`#ffffff / #f4f6f9 / #1a2332 / #5a6a7e / #2563eb`). Markdown rendering uses `marked` + `DOMPurify` + `highlight.js`; ZIP extraction uses `fflate`. Production bundle: 79 KB gz JS / 4 KB gz CSS.
 
@@ -167,7 +167,7 @@ A fourth entrypoint was added on top of the LAN service: a browser SPA that talk
 
 **State recovery for 404**: If the server has forgotten a task (e.g. after a restart) and `/api/v1/tasks/{id}` returns 404, the frontend synthesizes a local `failed` status with `error="服务端已无此任务记录 (404),可能 server 重启后丢失"`. The card stays in the list (so the user can delete it) but cannot be downloaded.
 
-**Hard dependency on CORS**: The frontend cannot talk to `server.py` unless `--cors-origin` (default `*`) is set. See the CORS subsection of the LAN Service above.
+**Hard dependency on CORS**: The frontend cannot talk to `gateway/server.py` unless `--cors-origin` (default `*`) is set. See the CORS subsection of the LAN Service above.
 
 **Dev workflow**:
 
@@ -175,10 +175,10 @@ A fourth entrypoint was added on top of the LAN service: a browser SPA that talk
 # Terminal 1: backend (with venv activated so .venv/bin/ninja is on PATH for sglang JIT)
 cd /home/user/.WYH/Unlimited-OCR
 source .venv/bin/activate
-python server.py --port 10001 --cors-origin http://127.0.0.1:5173
+python -m gateway.server --port 10001 --cors-origin http://127.0.0.1:5173
 
 # Terminal 2: frontend
-cd web
+cd clients/web
 pnpm install    # or npm install
 pnpm dev        # http://127.0.0.1:5173
 ```
@@ -191,7 +191,7 @@ pnpm build                # -> web/dist/ (79 KB gz JS, 4 KB gz CSS)
 pnpm preview              # serves dist/ on :5173
 
 # Or copy web/dist/ to any static host (nginx / caddy / S3+CloudFront).
-# When hosting separately, set `--cors-origin` to that host on server.py.
+# When hosting separately, set `--cors-origin` to that host on gateway/server.py.
 ```
 
 **Vite alias**: `@/` → `web/src/` (configured in both `tsconfig.json` and `vite.config.ts` — both must be updated together; missing either causes `pnpm typecheck` to pass while `pnpm build` fails with a Rollup import error).
@@ -201,13 +201,13 @@ pnpm preview              # serves dist/ on :5173
 - `ResultViewer` parses the result ZIP entirely in-browser with `fflate`. The server only sends bytes; nothing is staged in a public folder. As a side effect, downloading a 50 MB result ZIP and then re-asking for it re-downloads the full archive (no server-side cache).
 - `useApi` is a module-level singleton keyed on `serverUrl::token`. Changing the settings bar rebuilds the client; in-flight requests from the old client complete against the new base URL (a tiny race; not worth fixing for a single-user LAN tool).
 - The "use server-recommended concurrency" checkbox maps to `concurrencyHint = null`, which the server treats as "auto-detect". A user-set hint of `4` is sent as `concurrency_hint=4`. Don't send `0` (server rejects with 400).
-- `marked` is configured with `gfm: true, breaks: true` to match how `postprocess_sglang.py` formats result.md (single newlines become `<br>`, GitHub-style tables work).
+- `marked` is configured with `gfm: true, breaks: true` to match how `inference/postprocess.py` formats result.md (single newlines become `<br>`, GitHub-style tables work).
 - Highlight.js only registers 6 languages (js, py, bash, json, xml, css). If `result.md` contains other languages they'll render as plain text — fine, the code stays readable.
 - `highlight.js/styles/github.css` is imported globally so it doesn't need to be loaded per-component.
 
 ## Test/Build Logbook (2026-06-26)
 
-Three-round e2e closeout: Rounds 1+2 for the LAN service (`client.py` → `server.py` → SGLang → ZIP), Round 3 for the web frontend (`web/` → `server.py` over CORS, with the same end-to-end pipeline). End-to-end path is `client (CLI or browser) → server (FastAPI) → run_inference → SGLang :10000 → postprocess_sglang.py → zip → client download`.
+Three-round e2e closeout: Rounds 1+2 for the LAN service (`ocr-client` → `gateway/server.py` → SGLang → ZIP), Round 3 for the web frontend (`clients/web/` → `gateway/server.py` over CORS, with the same end-to-end pipeline). End-to-end path is `client (CLI or browser) → server (FastAPI) → run_inference → SGLang :10000 → inference.postprocess → zip → client download`.
 
 ### Round 1 — first full e2e (PASS, with one real issue)
 
@@ -219,54 +219,54 @@ Three-round e2e closeout: Rounds 1+2 for the LAN service (`client.py` → `serve
 
 ### Round 2 — verify the fix (PASS)
 
-- Fix: `server.py` now writes SGLang log to `<workdir>/logs/<task_id>_sglang.log` (lines 323, 432-433). DELETE handler also removes it (lines 264-269). State field `STATE.logs_dir` initialized in `main()`.
+- Fix: `gateway/server.py` now writes SGLang log to `<workdir>/logs/<task_id>_sglang.log`. DELETE handler also removes it. State field `STATE.logs_dir` initialized in `main()`.
 - 8-page PDF, 122 s wall, same content quality.
 - A) repo root `log/` stays empty ✅
 - B) `<workdir>/logs/<task_id>_sglang.log` is written (~36 KB) ✅
 - C) after `running → completed`, `tmp/<task_id>/` is removed but the log file is kept ✅
 - D) SGLang log content is normal (`Application startup complete` / `Uvicorn running` / decode batches / `SIGTERM received`) ✅
 - E) `DELETE /api/v1/tasks/<id>` removes the log along with the zip and tmp ✅
-- `client.py upload --watch` also works end-to-end (returns 479-line result.md + 36 images via the HTTP download path).
+- `ocr-client upload --watch` also works end-to-end (returns 479-line result.md + 36 images via the HTTP download path).
 
 ### Round 3 — web frontend first end-to-end (PASS, one real issue)
 
-- New: `web/` Vue 3 + Vite SPA committed in `88ed99d`. `server.py` gets a `CORSMiddleware` + `--cors-origin` flag so the browser can call `/api/v1/*`.
+- New: `clients/web/` Vue 3 + Vite SPA committed in `88ed99d`. `gateway/server.py` gets a `CORSMiddleware` + `--cors-origin` flag so the browser can call `/api/v1/*`.
 - 7-page Benchmarking PDF, 152 s wall (upload → poll → completed → zip downloaded). result.md 338 lines, 9 images, content readable. DELETE returns 204 and the follow-up GET returns 404 — full lifecycle works.
 - 8-page LEMMA PDF re-run via Node `fetch` (mimics browser's Origin + Authorization + preflight): 165 s wall, 783 KB ZIP, ALL ASSERTIONS PASSED.
 - Real Chromium `--headless --dump-dom` shows Vue mounted: `<div id="app" data-v-app="">` + 3 tabs + health badge + dropzone. Production build is 79 KB gz JS / 4 KB gz CSS.
-- **One real issue**: first e2e failed with `FileNotFoundError: 'ninja'`. Cause: `python server.py` was launched with `/path/.venv/bin/python` directly, so the subprocess PATH didn't include `.venv/bin/`. The bundled sglang JIT kernel needs `ninja` to build the rotary embedding at first request. Fix at launch: `source .venv/bin/activate` first (or `PATH=/path/.venv/bin:$PATH python server.py`). Not a code bug, but a deployment gotcha — see Pitfall #14.
+- **One real issue**: first e2e failed with `FileNotFoundError: 'ninja'`. Cause: `python -m gateway.server` was launched with `/path/.venv/bin/python` directly, so the subprocess PATH didn't include `.venv/bin/`. The bundled sglang JIT kernel needs `ninja` to build the rotary embedding at first request. Fix at launch: `source .venv/bin/activate` first (or `PATH=/path/.venv/bin:$PATH python -m gateway.server`). Not a code bug, but a deployment gotcha — see Pitfall #14.
 
 ### Pitfalls & mistakes worth remembering
 
-1. **Always pre-check GPU before launching e2e tests.** Round 1 found 33 GB of VRAM occupied by an orphan SGLang server from a prior smoke test (PID 2737484). The smoke test had `kill -9`'d `server.py` but SGLang subprocess was started without `preexec_fn=os.setsid` / `start_new_session=True`, so it survived parent death. Lesson: `infer.start_server` is not crash-safe against `SIGKILL` of its caller; harmless in normal use, leaves orphans if you abort. If you must kill mid-task, also `pkill -f sglang.launch_server`.
+1. **Always pre-check GPU before launching e2e tests.** Round 1 found 33 GB of VRAM occupied by an orphan SGLang server from a prior smoke test (PID 2737484). The smoke test had `kill -9`'d `gateway/server.py` but SGLang subprocess was started without `preexec_fn=os.setsid` / `start_new_session=True`, so it survived parent death. Lesson: `inference.batch.start_server` is not crash-safe against `SIGKILL` of its caller; harmless in normal use, leaves orphans if you abort. If you must kill mid-task, also `pkill -f sglang.launch_server`.
 
 2. **Don't trust subagent reports about file locations — verify.** Round 1 e2e agent reported "sglang log is hard-coded to repo root" because it saw the *old* `repo/log/sglang_server.log` (from a prior smoke test) and didn't find the *new* log in `workdir/tmp/<task_id>/` (because the tmp dir was already cleaned). The actual behavior was correct; the diagnosis was wrong. Always `stat` the suspected file or `tail` it to confirm the timestamp before "fixing" something.
 
 3. **Don't let subagents report a problem as a fix-candidate without a reproducible trace.** When the report said "sglang log path is wrong", the right move was to `ls -la repo/log/` and `find workdir -name 'sglang_server.log'` first — not to immediately change code. The real problem (cleaned-with-tmp + misleading stale file) was invisible from the report alone.
 
-4. **`run_inference()` return value is consumed by `infer.py main()` historically, but `server.py` ignores it.** Subagent B reported "`run_inference` doesn't return a dict" — that was a stale observation; Subagent A had already added the return. Always re-read the actual file when two subagent reports conflict, don't pick sides based on confidence.
+4. **`run_inference()` return value is consumed by `inference.cli.main()` historically, but `gateway/server.py` ignores it.** Subagent B reported "`run_inference` doesn't return a dict" — that was a stale observation; Subagent A had already added the return. Always re-read the actual file when two subagent reports conflict, don't pick sides based on confidence.
 
-5. **`AGENTS.md` previously documented only 2 of the 5 image modes.** The SGLang processor at `sglang/srt/multimodal/processors/unlimited_ocr.py:19-26` defines 5: `tiny`/`small`/`base`/`large`/`gundam`. Multi-image whitelist is `("tiny", "small", "base")`. The LAN service exposes only `gundam`/`base` for backward compatibility; if you want to expose the others, edit `server.py:183` and `client.py:430` together, and don't forget to test multi-image behavior (it isn't covered by any test today).
+5. **`AGENTS.md` previously documented only 2 of the 5 image modes.** The SGLang processor at `sglang/srt/multimodal/processors/unlimited_ocr.py:19-26` defines 5: `tiny`/`small`/`base`/`large`/`gundam`. Multi-image whitelist is `("tiny", "small", "base")`. The LAN service exposes only `gundam`/`base` for backward compatibility; if you want to expose the others, edit `gateway/server.py:183` and `clients/python-cli/src/ocr_client/cli.py:430` together, and don't forget to test multi-image behavior (it isn't covered by any test today).
 
-6. **`client.py` watch mode leaks `RuntimeError` on 4xx/5xx.** Acceptable for the LAN use case (4xx on watch almost always means the user has a wrong task_id and should restart anyway). If you add watch mode to anything that could legitimately see 5xx (e.g. transient server errors), wrap `_fetch_status` in `try/except RuntimeError`.
+6. **`ocr-client` watch mode leaks `RuntimeError` on 4xx/5xx.** Acceptable for the LAN use case (4xx on watch almost always means the user has a wrong task_id and should restart anyway). If you add watch mode to anything that could legitimately see 5xx (e.g. transient server errors), wrap `_fetch_status` in `try/except RuntimeError`.
 
-7. **Progress polling is coarse.** `_poll_progress` counts `.md` files in the output dir. With high concurrency (8), all pages finish within a few seconds of each other, so the bar jumps from 0 → 99% in one step. If you need finer progress, the only honest source is per-request token counts streaming out of SGLang — would require modifying `infer.py` to emit a progress callback.
+7. **Progress polling is coarse.** `_poll_progress` counts `.md` files in the output dir. With high concurrency (8), all pages finish within a few seconds of each other, so the bar jumps from 0 → 99% in one step. If you need finer progress, the only honest source is per-request token counts streaming out of SGLang — would require modifying `inference/batch.py` to emit a progress callback.
 
 8. **`detect_concurrency` shell-outs to `nvidia-smi` on every call.** Fine at task-startup (one extra ~100 ms). Don't call it on `/health` if you later add a tight polling loop.
 
-9. **README and code can drift.** After the initial build, three README inaccuracies slipped through: `--image_mode` (underscore) vs actual `--image-mode`, `-o` short option that doesn't exist, and 413 status code that the server never returns. Mitigation: any time you change CLI argparse in `client.py` or HTTP error codes in `server.py`, grep the docs for the old form.
+9. **README and code can drift.** After the initial build, three README inaccuracies slipped through: `--image_mode` (underscore) vs actual `--image-mode`, `-o` short option that doesn't exist, and 413 status code that the server never returns. Mitigation: any time you change CLI argparse in `ocr-client` or HTTP error codes in `gateway/server.py`, grep the docs for the old form.
 
-10. **"两份代码字节级一致"是危险的指令。** When the same logic is duplicated between `client.py` (repo root script) and `ocr-client/src/ocr_client/cli.py` (packaged CLI), a subagent given the brief "keep them byte-identical" may revert intentional UX changes from one file to the other. Concrete case: `prog="client.py"` (repo root, script invocation) vs `prog="ocr-client"` (packaged CLI, `ocr-client --help` should look like the user's command name). The subagent chose byte-identity and reverted the better prog. Coordinator must allow intentional divergence — one or two lines of difference (e.g. `prog=`, `if __name__` block) are fine if the divergence is justified. Always grep `diff` after parallel edits to confirm divergence is exactly the lines you sanctioned.
+10. **"两份代码字节级一致"是危险的指令。** When the same logic was duplicated between `client.py` (repo root script) and `ocr-client/src/ocr_client/cli.py` (packaged CLI), a subagent given the brief "keep them byte-identical" may revert intentional UX changes from one file to the other. Now that the root shim is deleted, `clients/python-cli/src/ocr_client/cli.py` is the single source of truth.
 
 11. **Subagent may reference a "future version" that doesn't exist yet.** A subagent given a spec to fix a bug may also update the user-facing README to mention "this is fixed in version ≥ X.Y.Z" — but the version bump itself is the coordinator's job. After parallel edits, always verify: (a) `pyproject.toml` version matches the version mentioned in any "fixed in" note in the README, and (b) the version bump is intentional. If the subagent bumped without authority, either bump the version yourself or revert the doc text.
 
-12. **Never kill a `server.py` process you didn't start on a port other than your test port.** A coordinated test in `/tmp/uocr_e2e/` may share the host with a long-lived LAN gateway on `:10001`. Always `ps -ef | grep server.py` *before* `pkill` and confirm every PID is from your own test session. Cheap to verify, expensive to break someone else's flow.
+12. **Never kill a `gateway/server.py` process you didn't start on a port other than your test port.** A coordinated test in `/tmp/uocr_e2e/` may share the host with a long-lived LAN gateway on `:10001`. Always `ps -ef | grep server.py` *before* `pkill` and confirm every PID is from your own test session. Cheap to verify, expensive to break someone else's flow.
 
 13. **`sdist` build can silently include build-time venvs.** When the sdist's `exclude` list is hard-coded to `.venv` but you create a different venv name (e.g. `.venv-dev` per README's dev-mode instructions), the venv **does** get included — `tar tzf ... | wc -l` will jump from 13 to ~900. Use `.venv*` glob, or move all dev venvs to a common prefix and exclude that prefix. Always inspect `tar tzf dist/*.tar.gz` after first build to confirm the package contents.
 
-14. **`server.py` launched with `.venv/bin/python` directly won't have `ninja` on PATH for the sglang JIT kernel.** When `python -m sglang.launch_server` first runs, it JIT-builds the rotary-embedding kernel by shelling out to `ninja`. If the parent Python's `PATH` doesn't include `.venv/bin/`, the build fails with `FileNotFoundError: [Errno 2] No such file or directory: 'ninja'`, the SGLang child crashes, the task fails. Fix: launch server with `source .venv/bin/activate` first, or `PATH=/path/.venv/bin:$PATH python server.py`. Worth putting into the Startup Runbook / README as the default launch pattern. The check `ls .venv/bin/ninja` should pass on any host that previously did `pip install ninja`; if missing, `.venv/bin/python -m pip install ninja`.
+14. **`gateway/server.py` launched with `.venv/bin/python` directly won't have `ninja` on PATH for the sglang JIT kernel.** When `python -m sglang.launch_server` first runs, it JIT-builds the rotary-embedding kernel by shelling out to `ninja`. If the parent Python's `PATH` doesn't include `.venv/bin/`, the build fails with `FileNotFoundError: [Errno 2] No such file or directory: 'ninja'`, the SGLang child crashes, the task fails. Fix: launch server with `source .venv/bin/activate` first, or `PATH=/path/.venv/bin:$PATH python -m gateway.server`. Worth putting into the Startup Runbook / README as the default launch pattern. The check `ls .venv/bin/ninja` should pass on any host that previously did `pip install ninja`; if missing, `.venv/bin/python -m pip install ninja`.
 
-15. **CORS middleware can't be added the normal way to an already-constructed FastAPI app.** The first attempt at wiring `CORSMiddleware` into `server.py` produced a working but fragile setup. The reason: FastAPI builds the middleware stack at the first request, so adding middleware via `app.add_middleware(...)` after `app = FastAPI(...)` is silently ignored. The fix used in `configure_cors` (`server.py:161-176`): explicitly clear `app.user_middleware` of any `CORSMiddleware`, set `app.middleware_stack = None`, then re-add. If you ever add another configurable middleware (gzip, trusted-host, etc.) follow the same `clear → reset stack → add` dance. Do not assume `app.add_middleware` from inside an argparse branch works at startup — it does, *if* the stack hasn't been built yet; once it has, you need the manual reset.
+15. **CORS middleware can't be added the normal way to an already-constructed FastAPI app.** The first attempt at wiring `CORSMiddleware` into `gateway/server.py` produced a working but fragile setup. The reason: FastAPI builds the middleware stack at the first request, so adding middleware via `app.add_middleware(...)` after `app = FastAPI(...)` is silently ignored. The fix used in `configure_cors` (`gateway/auth.py`): explicitly clear `app.user_middleware` of any `CORSMiddleware`, set `app.middleware_stack = None`, then re-add. If you ever add another configurable middleware (gzip, trusted-host, etc.) follow the same `clear → reset stack → add` dance. Do not assume `app.add_middleware` from inside an argparse branch works at startup — it does, *if* the stack hasn't been built yet; once it has, you need the manual reset.
 
 ## `ocr-client` package — install/test closeout (2026-06-26)
 
@@ -295,7 +295,7 @@ After Round 2, the `ocr-client` package was packaged and the README had 6 sectio
 
 18. **`pipx install` and `uv tool install` collide on `/home/user/.local/bin/ocr-client`.** pipx detects the existing symlink and prints `symlink missing or pointing to unexpected location` then proceeds anyway. The installed package still works, but the *resolved* binary depends on which install was last. If you want them to coexist, run `pipx install --force` only after `uv tool uninstall ocr-client`. The README doesn't currently mention this.
 
-19. **Client `download` on a `failed` task never sees the 410.** `client.py:_download_and_extract` polls the status first; on `failed` it short-circuits with the task's `error` field. So a user reading README §6 Q3 (`Task failed; no result zip available`) and using `ocr-client download` will see `error: download aborted: <reason>` instead. Both are correct, just different surfaces. If you want the user to see the 410 detail, change `_download_and_extract` to issue the GET first and handle 410/404 there.
+19. **Client `download` on a `failed` task never sees the 410.** `clients/python-cli/src/ocr_client/cli.py:_download_and_extract` polls the status first; on `failed` it short-circuits with the task's `error` field. So a user reading README §6 Q3 (`Task failed; no result zip available`) and using `ocr-client download` will see `error: download aborted: <reason>` instead. Both are correct, just different surfaces. If you want the user to see the 410 detail, change `_download_and_extract` to issue the GET first and handle 410/404 there.
 
 20. **Direct `_ascii_bar(c, total)` already handles `total == 0`.** Returns all `-` (32 wide). Verified: `_ascii_bar(3, 0)` → `[--------------------------------]`. The watch path in `_watch_with_plain` still calls `_ascii_bar(current, total)`; if `total_pages=0` (which is what you get for any `failed` task that died before `fitz.open`), the bar is all-dashes which is correct. No code change needed.
 
@@ -324,7 +324,7 @@ chmod 600 ~/.ocr_token
 #    --cors-origin '*' is the LAN default; tighten it if you only need specific
 #    origins (browser frontend on :5173, etc.).
 mkdir -p log
-setsid nohup python server.py \
+setsid nohup python -m gateway.server \
     --host 0.0.0.0 \
     --port 10001 \
     --workdir ./api_workdir \
@@ -340,8 +340,8 @@ disown
 > kernel on the first request. If `.venv/bin` isn't on the parent Python's PATH,
 > that subprocess dies with `FileNotFoundError: 'ninja'` and the SGLang child
 > crashes. Two acceptable launch patterns:
-> - `source .venv/bin/activate && setsid nohup python server.py ...` (preferred; all venv binaries resolve)
-> - `PATH=/path/.venv/bin:$PATH setsid nohup python server.py ...` (works without activating)
+> - `source .venv/bin/activate && setsid nohup python -m gateway.server ...` (preferred; all venv binaries resolve)
+> - `PATH=/path/.venv/bin:$PATH setsid nohup python -m gateway.server ...` (works without activating)
 
 **Verify the server is alive** (replace `$IP` with the host's LAN IP, e.g. `172.17.166.37`):
 
@@ -363,9 +363,8 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:10001/api/v1/tasks/any
 ### Client side — install on every laptop that will use the service
 
 ```bash
-# On the laptop. client.py is a single-file script, just copy it.
-# Dependencies: requests (required), rich (optional, for progress bars).
-pip install requests rich         # or `uv pip install requests rich`
+# On the laptop. Install the ocr-client package:
+uv tool install clients/python-cli    # or: pip install clients/python-cli
 # Then set the server URL and the token in your shell rc / .env:
 export OCR_SERVER="http://172.17.166.37:10001"
 export OCR_API_TOKEN="$(cat ~/.ocr_token)"   # the value from step 2 above
@@ -374,10 +373,10 @@ export OCR_API_TOKEN="$(cat ~/.ocr_token)"   # the value from step 2 above
 **Smoke-test from the laptop**:
 
 ```bash
-python client.py health
+ocr-client health
 # Expect: status=ok, gpu info, concurrency_recommended=8
 
-python client.py status 000000000000 --server "$OCR_SERVER" --token "$OCR_API_TOKEN"
+ocr-client status 000000000000 --server "$OCR_SERVER" --token "$OCR_API_TOKEN"
 # Expect: HTTP 404 (task not found) — confirms token is right and 404 path is alive
 ```
 
@@ -385,13 +384,13 @@ python client.py status 000000000000 --server "$OCR_SERVER" --token "$OCR_API_TO
 
 ```bash
 # One-shot: upload → wait → download → unzip
-python client.py upload my.pdf --watch
+ocr-client upload my.pdf --watch
 
 # Or manually, for a long-running task
-TASK_ID=$(python client.py upload my.pdf | tail -1)   # bare task_id on stdout
-python client.py status $TASK_ID --watch
-python client.py download $TASK_ID --out ./out        # writes ./out/$TASK_ID.zip
-                                                     # + extracts to ./out/$TASK_ID/
+TASK_ID=$(ocr-client upload my.pdf | tail -1)   # bare task_id on stdout
+ocr-client status $TASK_ID --watch
+ocr-client download $TASK_ID --out ./out        # writes ./out/$TASK_ID.zip
+                                                # + extracts to ./out/$TASK_ID/
 ```
 
 The final structure on disk is:
@@ -423,10 +422,10 @@ watch -n 2 nvidia-smi
 # List all currently tracked tasks (in-memory; restart wipes this)
 curl -s -H "Authorization: Bearer $OCR_API_TOKEN" \
     http://127.0.0.1:10001/api/v1/tasks/whatever
-# (no bulk-list endpoint exists; task_ids are returned by `client.py upload`)
+# (no bulk-list endpoint exists; task_ids are returned by `ocr-client upload`)
 
 # Delete a task and free its disk
-python client.py delete $TASK_ID
+ocr-client delete $TASK_ID
 # Removes: api_workdir/outputs/$TASK_ID.zip,
 #          api_workdir/tmp/$TASK_ID/,
 #          api_workdir/logs/$TASK_ID_sglang.log
@@ -436,11 +435,11 @@ python client.py delete $TASK_ID
 nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv
 # 2. Kill it
 kill -TERM <pid>     # SIGTERM → SGLang drains in-flight requests and exits
-# (avoid SIGKILL unless TERM didn't work; SIGKILL on a parent server.py also
+# (avoid SIGKILL unless TERM didn't work; SIGKILL on a parent gateway/server.py also
 #  orphans the SGLang subprocess — see Pitfall #1 above)
 
 # Restart the API gateway (after code/config changes)
-pkill -TERM -f "server.py --port 10001"
+pkill -TERM -f "gateway.server"
 sleep 2
 # Then re-run the launch command from the "Server side" section
 ```
@@ -449,17 +448,13 @@ sleep 2
 
 ```
 /home/user/.WYH/Unlimited-OCR/
-├── server.py                 # the gateway
-├── client.py                 # copy to laptops
-├── web/                      # browser frontend (Vue 3 + Vite)
-│   ├── src/                  # components, composables, types, styles
-│   ├── package.json          # frontend deps (vue, marked, dompurify, …)
-│   ├── dist/                 # production build output (after `pnpm build`)
-│   └── README.md
+├── gateway/server.py         # the FastAPI gateway
+├── clients/
+│   ├── python-cli/           # CLI client package
+│   └── web/                  # browser frontend (Vue 3 + Vite)
 ├── requirements-api.txt
 ├── log/
-│   ├── api_server.log        # gateway stdout/stderr (rotation = manual)
-│   └── sglang_server.log     # legacy / smoke-test leftover, ignore
+│   └── api_server.log        # gateway stdout/stderr (rotation = manual)
 └── api_workdir/              # default --workdir
     ├── tmp/$TASK_ID/         # per-task scratch; removed on completion
     ├── outputs/$TASK_ID.zip  # final result; kept until DELETE
@@ -474,10 +469,10 @@ sleep 2
 # Terminal 1: backend (with venv activated; see Pitfall #14)
 cd /home/user/.WYH/Unlimited-OCR
 source .venv/bin/activate
-python server.py --port 10001 --cors-origin http://127.0.0.1:5173
+python -m gateway.server --port 10001 --cors-origin http://127.0.0.1:5173
 
 # Terminal 2: frontend
-cd web
+cd clients/web
 pnpm install    # first time only
 pnpm dev        # → http://127.0.0.1:5173 (LAN-accessible on 0.0.0.0)
 ```
@@ -490,14 +485,14 @@ cd web && pnpm build       # → web/dist/ (79 KB gz JS, 4 KB gz CSS)
 
 # Serve web/dist/ from any static host (nginx / caddy / S3+CloudFront)
 # Then set --cors-origin to that host on the backend
-python server.py --port 10001 --cors-origin https://ocr.example.com
+python -m gateway.server --port 10001 --cors-origin https://ocr.example.com
 ```
 
 **Client prerequisites**: browser with native `fetch`, `DecompressionStream`, and `URL.createObjectURL` (Chrome 80+, Firefox 113+, Safari 16.4+). No additional software on the laptop.
 
 ### Pre-flight checklist before the first real run
 
-1. `python server.py --help` — confirms all six CLI flags are present (host, port, workdir, model-dir, gpu, **cors-origin**).
+1. `python -m gateway.server --help` — confirms all six CLI flags are present (host, port, workdir, model-dir, gpu, **cors-origin**).
 2. `nvidia-smi` — confirms the target GPU is free (no orphaned processes).
 3. Port `:10001` not in use: `ss -tln | grep 10001` (should be empty before start).
 4. Port `:10000` is **not** in use before starting the gateway: `ss -tln | grep 10000` should be empty. If a stale SGLang is holding it, `pkill -TERM -f sglang.launch_server`.

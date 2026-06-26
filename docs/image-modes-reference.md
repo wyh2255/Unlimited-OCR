@@ -24,15 +24,15 @@ The SGLang processor (not the model code itself) defines **5 image-mode presets*
 
 | Surface | Modes accepted | Where |
 |---------|----------------|-------|
-| `infer.py` CLI (`--image_mode`) | `gundam`, `base` | `infer.py:324` (argparse `choices`) |
-| `run_inference(image_mode=...)` | `gundam`, `base` | `infer.py:338` (validated by argparse) |
-| `ocr_pdf.py` | hard-coded to `base` (image_size=1024) | `ocr_pdf.py:88` |
-| LAN HTTP API (`image_mode` form field) | `gundam`, `base` | `server.py:201` |
-| LAN HTTP API for PDFs | **always `base`** (silent coercion of `gundam` → `base`) | `server.py:223, 235, 363` |
-| `client.py` CLI (`--image-mode`) | `gundam`, `base` | `client.py:429` (argparse) |
+| `inference/cli.py` CLI (`--image_mode`) | `gundam`, `base` | `inference/cli.py:19` (argparse `choices`) |
+| `run_inference(image_mode=...)` | `gundam`, `base` | `inference/batch.py` (validated by argparse) |
+| `model/ocr_pdf.py` | hard-coded to `base` (image_size=1024) | `model/ocr_pdf.py:74` |
+| LAN HTTP API (`image_mode` form field) | `gundam`, `base` | `gateway/server.py:59` |
+| LAN HTTP API for PDFs | **always `base`** (silent coercion of `gundam` → `base`) | `gateway/server.py:77` |
+| `ocr-client` CLI (`--image-mode`) | `gundam`, `base` | `clients/python-cli/src/ocr_client/cli.py` (argparse) |
 | Web frontend radio | `gundam`, `base` | `web/src/components/UploadPanel.vue`, `web/src/types/api.ts` |
 
-> The other 3 modes (`tiny`, `small`, `large`) are **defined by the SGLang processor** but **not exposed by any of the user-facing surfaces**. To use them, call `run_inference(image_mode="tiny")` programmatically and add `("tiny", "small", "large")` to the validation whitelist in `server.py:183` and `client.py:430`. Multi-image behavior is not covered by any test today.
+> The other 3 modes (`tiny`, `small`, `large`) are **defined by the SGLang processor** but **not exposed by any of the user-facing surfaces**. To use them, call `run_inference(image_mode="tiny")` programmatically and add `("tiny", "small", "large")` to the validation whitelist in `gateway/server.py` and `clients/python-cli/src/ocr_client/cli.py`. Multi-image behavior is not covered by any test today.
 
 ## How `crop_mode` works
 

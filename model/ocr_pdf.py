@@ -5,8 +5,8 @@ PDF → OCR → Markdown (单文件输出)
 输出可直接用于翻译工作流。
 
 用法:
-    python ocp pdf <pdf文件> [-o ./output] [--model_dir ./model]
-    python ocr_pdf.py <pdf文件> --no-page-split     # 去掉 <PAGE> 分隔符
+    python -m model.ocr_pdf <pdf文件> [-o ./output] [--model_dir ./model]
+    python -m model.ocr_pdf <pdf文件> --no-page-split     # 去掉 <PAGE> 分隔符
 """
 
 import argparse

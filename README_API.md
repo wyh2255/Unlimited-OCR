@@ -1,7 +1,7 @@
 ---
 日期: 2026-06-26
 文档类型: 用户使用手册
-文档概述: 局域网 PDF OCR 服务（server.py + client.py）的快速上手、配置、API 参考
+文档概述: 局域网 PDF OCR 服务（gateway/server.py + clients/python-cli/）的快速上手、配置、API 参考
 ---
 
 # Unlimited-OCR 局域网 API 服务使用手册
@@ -14,8 +14,8 @@
 
 ```
 ┌────────────┐    HTTP    ┌──────────────────────┐    HTTP    ┌─────────────────────┐
-│  client.py │ ─────────► │   server.py (网关)   │ ─────────► │ infer.py 内置 SGLang │
-│ (笔记本)   │  :10001    │   FastAPI + worker   │  :10000    │ OpenAI 兼容端点     │
+│  ocr-client │ ─────────► │  gateway/server.py   │ ─────────► │ inference/batch.py  │
+│ (笔记本)   │  :10001    │   FastAPI + worker   │  :10000    │ SGLang 推理服务     │
 └────────────┘            └──────────────────────┘            └─────────────────────┘
                                   │
                                   │ 任务完成后
@@ -26,7 +26,7 @@
 ```
 
 - 客户端只连 `:10001`(FastAPI 网关)。
-- `:10000` 是 SGLang 推理服务,由 `infer.py` 在 worker 线程内按需拉起,**不需要**手动启动。
+- `:10000` 是 SGLang 推理服务,由 `inference/batch.py` 在 worker 线程内按需拉起,**不需要**手动启动。
 - 上传 → 入队 → 后台 worker 拉起 SGLang → 并发 OCR → 后处理 → 打包成 ZIP → 客户端下载。
 
 ## 3. 服务器部署
@@ -43,7 +43,7 @@ uv pip install -r requirements-api.txt
 
 ```bash
 export OCR_API_TOKEN="<自定义长随机串>"   # 可选,不设就自动生成
-python server.py --host 0.0.0.0 --port 10001
+python -m gateway.server --host 0.0.0.0 --port 10001
 ```
 
 - 未设置 `OCR_API_TOKEN` 时,server 启动时用 `secrets.token_urlsafe(24)` 生成一个随机 token 并打印到 stdout 一次,请立刻抄走。
@@ -54,7 +54,7 @@ python server.py --host 0.0.0.0 --port 10001
 ### 4.1 上传 PDF
 
 ```bash
-python client.py upload doc.pdf \
+ocr-client upload doc.pdf \
     --server http://x.x.x.x:10001 \
     --token xxx \
     --watch
@@ -68,10 +68,10 @@ python client.py upload doc.pdf \
 
 | 子命令 | 用途 |
 |---|---|
-| `python client.py status <task_id> --server ... --token ...` | 查询任务状态与进度 |
-| `python client.py download <task_id> --out ./out --server ... --token ...` | 下载结果 ZIP |
-| `python client.py delete <task_id> --server ... --token ...` | 清理 ZIP + 取消排队中的任务 |
-| `python client.py health --server ...` | 健康检查(免 token) |
+| `ocr-client status <task_id> --server ... --token ...` | 查询任务状态与进度 |
+| `ocr-client download <task_id> --out ./out --server ... --token ...` | 下载结果 ZIP |
+| `ocr-client delete <task_id> --server ... --token ...` | 清理 ZIP + 取消排队中的任务 |
+| `ocr-client health --server ...` | 健康检查(免 token) |
 
 ## 5. API 参考
 
@@ -193,7 +193,7 @@ curl -X DELETE -H "Authorization: Bearer $TOKEN" \
 
 ## 6. GPU 内存自动降级
 
-`server.py` 在 worker 启动时调用 `detect_concurrency(gpu_index=0)`,通过 `nvidia-smi` 查询空闲显存,按三档自动选并发数:
+`gateway/server.py` 在 worker 启动时调用 `detect_concurrency(gpu_index=0)`,通过 `nvidia-smi` 查询空闲显存,按三档自动选并发数:
 
 | 空闲显存 | 推荐并发 |
 |---|---|

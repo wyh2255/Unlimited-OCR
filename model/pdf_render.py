@@ -1,7 +1,7 @@
 """Shared PDF rendering helpers.
 
 Centralizes the `fitz`-based PDF→PNG logic that was previously duplicated
-across `ocr_pdf.py`, `infer.py`, and `postprocess_sglang.py`. Lives under
+across `model/ocr_pdf.py`, `inference/batch.py`, and `inference/postprocess.py`. Lives under
 `model/` (will move to a shared `common/` location in Phase 3 if other
 non-model paths need it).
 """

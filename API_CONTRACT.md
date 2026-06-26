@@ -1,7 +1,7 @@
 ---
 日期: 2026-06-26
 文档类型: API 协议契约
-文档概述: Unlimited-OCR 局域网服务的客户端-服务端接口规范，作为 server.py、client.py、文档等多个 subagent 的协同基准
+文档概述: Unlimited-OCR 局域网服务的客户端-服务端接口规范，作为 gateway/server.py、clients/python-cli/、文档等多个 subagent 的协同基准
 ---
 
 # API 协议契约 v1.0
@@ -13,7 +13,7 @@
 | 角色 | 监听地址 | 端口 |
 |---|---|---|
 | FastAPI 网关 | `0.0.0.0` | `10001` |
-| SGLang 推理 | `0.0.0.0` | `10000`（由 `infer.py` 内部启动） |
+| SGLang 推理 | `0.0.0.0` | `10000`（由 `inference/batch.py` 内部启动） |
 
 健康检查：`GET /api/v1/health` 返回 200，body 含 GPU 信息。其他接口需要鉴权。
 
@@ -130,10 +130,10 @@ queued → running → (completed | failed)
 
 ```
 Unlimited-OCR/
-├── server.py              # 新建
-├── client.py              # 新建
-├── infer.py               # 改动：新增 run_inference() 函数，main() 不变
-├── postprocess_sglang.py  # 不动
+├── gateway/server.py              # FastAPI 网关
+├── clients/python-cli/            # CLI 客户端
+├── inference/cli.py + batch.py    # SGLang 批处理
+├── inference/postprocess.py       # 后处理
 └── requirements-api.txt   # 新建
 ```
 
@@ -146,7 +146,7 @@ Unlimited-OCR/
 
 ## 7. GPU 内存检测 + 三档降级
 
-**`detect_concurrency()` 函数签名**（必须存在于 `server.py`）：
+**`detect_concurrency()` 函数签名**（存在于 `gateway/concurrency.py`）：
 
 ```python
 def detect_concurrency(gpu_index: int = 0) -> int:
@@ -161,7 +161,7 @@ def detect_concurrency(gpu_index: int = 0) -> int:
 | `>= 10` | `4` |
 | `< 10`  | `2` |
 
-## 8. infer.py 必须新增的函数
+## 8. inference/batch.py 的函数
 
 ```python
 def run_inference(
@@ -178,20 +178,18 @@ def run_inference(
     
     Starts SGLang server, fans out concurrent requests, stops server.
     Returns dict with keys: output_dir, request_count, successful, total_tokens, wall_time.
-    """
-```
+    ```
 
-`main()` 入口**必须**保持原样（CLI 行为完全兼容）。
 
 ## 9. 调用关系
 
 ```
-client.py  ──HTTP──►  server.py
-                       │
-                       ▼ worker thread
-                       run_inference() ──► infer.py 内部 SGLang server
-                       postprocess()    ──► postprocess_sglang.py
-                       zip + cleanup
+ocr-client  ──HTTP──►  gateway/server.py
+                        │
+                        ▼ worker thread
+                        run_inference() ──► SGLang server (:10000)
+                        inference.postprocess()
+                        zip + cleanup
 ```
 
 ## 10. 依赖新增
@@ -214,6 +212,6 @@ Pillow>=10.0
 启动 server 后 `curl` 必须能跑通：
 1. `curl http://127.0.0.1:10001/api/v1/health` → 200 + GPU 信息
 2. 无 token 访问 `/api/v1/tasks` 任何端点 → 401
-3. `client.py upload some.pdf` → task_id
-4. `client.py status <id>` → 进度增长，最终 completed
-5. `client.py download <id>` → 解压后有 `result.md` 和 `images/`
+3. `ocr-client upload some.pdf` → task_id
+4. `ocr-client status <id>` → 进度增长，最终 completed
+5. `ocr-client download <id>` → 解压后有 `result.md` 和 `images/`

@@ -28,7 +28,7 @@ PDF and multi-page parsing only support the `base` mode.
 
 | File | Purpose |
 |------|---------|
-| `infer.py` | CLI entry point for concurrent batch inference via SGLang. Starts the server, fans out requests with `ThreadPoolExecutor`, collects streaming results. |
+| `inference/cli.py` | CLI entry point for concurrent batch inference via SGLang. Starts the server, fans out requests with `ThreadPoolExecutor`, collects streaming results. |
 | `wheel/sglang-0.0.0.dev*.whl` | Bundled SGLang wheel (patched for Unlimited-OCR's custom logit processor) |
 | `assets/` | Demo images and GIFs for README |
 
@@ -49,7 +49,7 @@ uv pip install kernels==0.11.7 pymupdf==1.27.2.2
 ruff check .                    # Lint
 black .                         # Format
 isort .                         # Sort imports
-mypy infer.py                   # Type check
+mypy inference/cli.py           # Type check
 pytest                          # Run tests (when added)
 ```
 
@@ -57,10 +57,10 @@ pytest                          # Run tests (when added)
 
 ```bash
 # Single image / image directory (SGLang)
-python infer.py --image_dir ./examples/images --output_dir ./outputs --concurrency 8 --image_mode gundam
+python -m inference.cli --image_dir ./examples/images --output_dir ./outputs --concurrency 8 --image_mode gundam
 
 # PDF (SGLang, base mode only)
-python infer.py --pdf ./document.pdf --output_dir ./outputs --concurrency 8 --image_mode base
+python -m inference.cli --pdf ./document.pdf --output_dir ./outputs --concurrency 8 --image_mode base
 
 # Transformers direct (single image)
 python -c "

@@ -20,10 +20,10 @@
 
 ## 1. 这是什么
 
-`ocr-client` 是 [`Unlimited-OCR` 仓库](https://github.com/anomalyco/opencode/tree/main/Unlimited-OCR) 里 `server.py` 网关的独立客户端包。打包后可以单独分发,不需要 clone 整个仓库,不需要 GPU,只需要 `python` 和 `requests`(可选 `rich` 增强体验)。
+`ocr-client` 是 [`Unlimited-OCR` 仓库](https://github.com/anomalyco/opencode/tree/main/Unlimited-OCR) 里 `gateway/server.py` 网关的独立客户端包。打包后可以单独分发,不需要 clone 整个仓库,不需要 GPU,只需要 `python` 和 `requests`(可选 `rich` 增强体验)。
 
 它做的事情:
-- 上传 PDF 到 `server.py` 的 `:10001` 端口
+- 上传 PDF 到 `gateway/server.py` 的 `:10001` 端口
 - 轮询任务状态(自动降级并发由服务器端决定)
 - 下载结果 zip 并解压到本地
 - 删除任务释放磁盘
@@ -158,16 +158,16 @@ ocr-client --server http://192.168.1.50:10001 --token abc123... health
 
 > 注意:`health` 端点本身**不需要** token,但 ocr-client 仍接受 `--token` 参数(版本 ≥ 0.1.1 起),让脚本能统一给所有子命令传参而不报错。
 
-## 5. 跟 server.py 的关系
+## 5. 跟 gateway/server.py 的关系
 
 ```
-笔记本(装 ocr-client)         服务器(装 Unlimited-OCR + server.py)
+笔记本(装 ocr-client)         服务器(装 Unlimited-OCR + gateway)
 ┌──────────────────┐         ┌────────────────────────────────┐
-│  ocr-client      │  HTTP   │  server.py :10001              │
+│  ocr-client      │  HTTP   │  gateway/server.py :10001      │
 │  upload / status │◄───────►│      ↓ worker                  │
 │  download        │  :10001 │      ↓ run_inference()         │
 └──────────────────┘  Bearer │      ↓ SGLang :10000          │
-                            │      ↓ postprocess_sglang.py   │
+                            │      ↓ inference.postprocess   │
                             │      ↓ zip                     │
                             └────────────────────────────────┘
 ```

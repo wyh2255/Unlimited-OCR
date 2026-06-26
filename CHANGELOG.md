@@ -14,21 +14,21 @@ The following 5 commits are local additions, all authored on 2026-06-26:
 
 | SHA | Subject | What it adds |
 |---|---|---|
-| `c79996f` | Add LAN service core | `server.py` (FastAPI gateway), `client.py` (CLI), `ocr_pdf.py` (Transformers direct), `postprocess_sglang.py`, `infer.py` patches (`run_inference` programmatic entrypoint + SGLang launch flags), `requirements-api.txt`, `AGENTS.md` (initial 467 lines), `CLAUDE.md`, `API_CONTRACT.md`, `README_API.md` |
-| `ee7bdcb` | Add CORS middleware to `server.py` | `CORSMiddleware` import, `configure_cors` helper, `--cors-origin` CLI flag, startup log line, `Content-Disposition` expose header — to allow the browser frontend to call the LAN gateway |
+| `c79996f` | Add LAN service core | `gateway/server.py` (FastAPI gateway), `clients/python-cli/` (CLI), `model/ocr_pdf.py` (Transformers direct), `inference/postprocess.py`, `inference/cli.py` + `inference/batch.py` patches, `requirements-api.txt`, `AGENTS.md` (initial 467 lines), `CLAUDE.md`, `API_CONTRACT.md`, `README_API.md` |
+| `ee7bdcb` | Add CORS middleware to `gateway/server.py` | `CORSMiddleware` import, `configure_cors` helper, `--cors-origin` CLI flag, startup log line, `Content-Disposition` expose header — to allow the browser frontend to call the LAN gateway |
 | `84a6c69` | Add web frontend scaffold | `web/` (Vite 6 + Vue 3 + TypeScript 5.7) — empty scaffold, `package.json`, `vite.config.ts`, `tsconfig.json`, design tokens, favicon |
 | `7695f6f` | Add web frontend components and App shell | `web/src/` — 9 Vue components, 4 composables, 3 tabs (upload / tasks / result), 79 KB gz production bundle |
-| `74670e8` | Add ocr-client package + AGENTS.md install/test closeout | `ocr-client/` as a pip-installable wrapper around the same `client.py` logic (package name `ocr_client`, console script `ocr-client`); AGENTS.md install/test closeout for 6 README sections |
+| `74670e8` | Add ocr-client package + AGENTS.md install/test closeout | `ocr-client/` as a pip-installable wrapper around `clients/python-cli/` (package name `ocr_client`, console script `ocr-client`); AGENTS.md install/test closeout for 6 README sections |
 
 ## Code paths introduced (none upstream)
 
 | Path | File (current location) | Purpose |
 |------|------------------------|---------|
-| Transformers-direct | `ocr_pdf.py` | Single GPU, in-process, single `result.md` output |
-| SGLang batch | `infer.py` (CLI) | Concurrent SGLang, per-page `.md` files (raw) |
-| SGLang + postprocess | `postprocess_sglang.py` | Cleans raw output, embeds cropped images, produces `result.md` + `images/` |
-| LAN HTTP gateway | `server.py` | FastAPI, Bearer auth, FIFO worker queue, zip-on-completion |
-| CLI client | `client.py` | Mirrors HTTP API, rich/ASCII progress |
+| Transformers-direct | `model/ocr_pdf.py` | Single GPU, in-process, single `result.md` output |
+| SGLang batch | `inference/cli.py` / `inference/batch.py` | Concurrent SGLang, per-page `.md` files (raw) |
+| SGLang + postprocess | `inference/postprocess.py` | Cleans raw output, embeds cropped images, produces `result.md` + `images/` |
+| LAN HTTP gateway | `gateway/server.py` | FastAPI, Bearer auth, FIFO worker queue, zip-on-completion |
+| CLI client | `clients/python-cli/src/ocr_client/cli.py` | Mirrors HTTP API, rich/ASCII progress |
 | Web frontend | `web/` | Vue 3 SPA over the LAN API |
 
 ## Upstream (unchanged since forking)
