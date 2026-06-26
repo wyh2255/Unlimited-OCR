@@ -18,7 +18,7 @@ import sys
 import torch
 from transformers import AutoModel, AutoTokenizer
 
-from model.pdf_render import pdf_to_images
+from .pdf_render import pdf_to_images
 
 
 def load_model(model_dir: str = "baidu/Unlimited-OCR"):
