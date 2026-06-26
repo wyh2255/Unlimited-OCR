@@ -39,6 +39,7 @@ from typing import Optional
 
 import fitz
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Response, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from infer import run_inference
@@ -153,6 +154,26 @@ def get_token(authorization: Optional[str] = Header(default=None)) -> str:
 
 
 app = FastAPI(title="Unlimited-OCR API", version="1.0")
+
+_CORS_ORIGINS: list[str] = ["*"]
+
+
+def configure_cors(origins: list[str]) -> None:
+    """Reconfigure the CORS middleware. Must be called before the first request."""
+    global _CORS_ORIGINS
+    _CORS_ORIGINS = origins or ["*"]
+    app.user_middleware = [
+        m for m in app.user_middleware if m.cls is not CORSMiddleware
+    ]
+    app.middleware_stack = None
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_CORS_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["Content-Disposition"],
+    )
 
 
 @app.get("/api/v1/health")
@@ -418,6 +439,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--workdir", default="./api_workdir")
     parser.add_argument("--model-dir", default=DEFAULT_MODEL_DIR)
     parser.add_argument("--gpu", type=int, default=0)
+    parser.add_argument(
+        "--cors-origin",
+        action="append",
+        default=None,
+        help=(
+            "CORS allow-origin. May be passed multiple times. "
+            "Use '*' for any (LAN default). Example: --cors-origin http://192.168.1.10:5173"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -431,6 +461,9 @@ def main() -> None:
     os.makedirs(os.path.join(STATE.workdir, "outputs"), exist_ok=True)
     STATE.logs_dir = os.path.join(STATE.workdir, "logs")
     os.makedirs(STATE.logs_dir, exist_ok=True)
+
+    configure_cors(args.cors_origin or ["*"])
+    print(f"[server] CORS allow_origins={_CORS_ORIGINS}", flush=True)
 
     token = os.environ.get("OCR_API_TOKEN", "").strip()
     if not token:
