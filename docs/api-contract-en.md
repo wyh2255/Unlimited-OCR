@@ -138,7 +138,7 @@ Status codes used: `400` / `401` / `404` / `410` / `500`.
 
 ## 6. CORS
 
-The server installs `fastapi.middleware.cors.CORSMiddleware` and exposes a `--cors-origin` CLI flag (repeatable, default `["*"]` for LAN). `expose_headers=["Content-Disposition"]` so the browser JS can read the suggested ZIP filename. The middleware is installed via a `configure_cors(origins)` helper that wipes any previous CORS entries from `app.user_middleware` first (FastAPI's middleware stack cannot be added to an already-running app the normal way).
+The server installs `fastapi.middleware.cors.CORSMiddleware` at module level and exposes a `--cors-origin` CLI flag (repeatable, default `["*"]` for LAN). `expose_headers=["Content-Disposition"]` so the browser JS can read the suggested ZIP filename. The middleware is rebuilt in `main()` from CLI args before `uvicorn.run()`.
 
 ## 7. GPU auto-tiering
 

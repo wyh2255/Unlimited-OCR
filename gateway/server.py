@@ -1,9 +1,4 @@
-"""FastAPI app, HTTP endpoints, CLI parser, and `main()` entry point.
-
-This module constructs the `app` object that uvicorn serves. CORS is
-configured via `gateway.auth.configure_cors` from `main()` before the
-first request.
-"""
+"""FastAPI app, HTTP endpoints, CLI parser, and `main()` entry point."""
 
 from __future__ import annotations
 
@@ -16,9 +11,10 @@ import uuid
 from typing import Optional
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Response, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from .auth import configure_cors, cors_origins, get_token
+from .auth import get_token
 from .concurrency import _get_gpu_info, detect_concurrency
 from .state import STATE, TaskState, _now_iso, _task_to_dict
 from .tasks import _worker_loop
@@ -28,6 +24,14 @@ MAX_PDF_BYTES = 200 * 1024 * 1024
 DEFAULT_MODEL_DIR = "./Unlimited-OCR"
 
 app = FastAPI(title="Unlimited-OCR API", version="1.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
+)
 
 
 @app.get("/api/v1/health")
@@ -177,8 +181,19 @@ def main() -> None:
     STATE.logs_dir = os.path.join(STATE.workdir, "logs")
     os.makedirs(STATE.logs_dir, exist_ok=True)
 
-    configure_cors(args.cors_origin or ["*"])
-    print(f"[server] CORS allow_origins={cors_origins()}", flush=True)
+    origins = args.cors_origin or ["*"]
+    app.user_middleware = [
+        m for m in app.user_middleware if m.cls is not CORSMiddleware
+    ]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["Content-Disposition"],
+    )
+    print(f"[server] CORS allow_origins={origins}", flush=True)
 
     token = os.environ.get("OCR_API_TOKEN", "").strip()
     if not token:
