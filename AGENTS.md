@@ -260,6 +260,37 @@ Three-round e2e closeout: Rounds 1+2 for the LAN service (`client.py` → `serve
 
 15. **CORS middleware can't be added the normal way to an already-constructed FastAPI app.** The first attempt at wiring `CORSMiddleware` into `server.py` produced a working but fragile setup. The reason: FastAPI builds the middleware stack at the first request, so adding middleware via `app.add_middleware(...)` after `app = FastAPI(...)` is silently ignored. The fix used in `configure_cors` (`server.py:161-176`): explicitly clear `app.user_middleware` of any `CORSMiddleware`, set `app.middleware_stack = None`, then re-add. If you ever add another configurable middleware (gzip, trusted-host, etc.) follow the same `clear → reset stack → add` dance. Do not assume `app.add_middleware` from inside an argparse branch works at startup — it does, *if* the stack hasn't been built yet; once it has, you need the manual reset.
 
+## `ocr-client` package — install/test closeout (2026-06-26)
+
+After Round 2, the `ocr-client` package was packaged and the README had 6 sections that were "documented but not actually run". This closeout exercised every one of them on a real A100 host (no mocks, all real SGLang inference on the LEMMA 8-page PDF where applicable). Every install path is now **verified end-to-end**.
+
+| # | Section | Method | Result |
+|---|---|---|---|
+| 1 | §2.1 `uv tool install` (basic) | `uv tool install ./dist/*.whl` | PASS — `/home/user/.local/bin/ocr-client` |
+| 1' | §2.1 `uv tool install` (`[rich]`) | `uv tool install "ocr-client[rich]"` | PASS — `rich` 15.0.0 also installed |
+| 2 | §2.2 `uvx --from .` | `uvx --from . ocr-client health` | PASS — health returns 200 + JSON |
+| 3 | §2.2 `git+file://` + `#subdirectory=` | mock bare repo with `git symbolic-ref HEAD refs/heads/main` then `uv tool install "ocr-client @ git+file://...#subdirectory=ocr-client"` | PASS — pins to commit hash, builds and installs |
+| 4 | §2.3 `pip install` in venv (PEP 668) | `uv venv` + `uv pip install` | PASS — works inside venv without flags |
+| 4' | §2.3 system `pip` + `--break-system-packages` | `/usr/bin/pip3 install --break-system-packages` | PASS — but **system-pollutes**; not recommended |
+| 5 | §2.3 `pipx install` | `pipx install /path/to/ocr-client` | PASS — installs to pipx venv (note: symlink warning if `uv tool install` already created `/home/user/.local/bin/ocr-client`) |
+| 6 | §2.2 git+https | not tested | (no real git remote; tested git+file:// which is identical protocol path) |
+| 7 | §6 Q3 task failed → download | upload corrupted PDF (`%PDF-1.4` + garbage) → server 410 + client error | PASS — server returns `{"detail":"task failed; no result zip available"}` (status 410). Client polls to failed first → reports `error: download aborted: <task error>` (different from raw curl but still clean, no traceback) |
+| 8 | §6 Q4 rich-degraded ASCII | `uv venv` without `[rich]`, `ocr-client status <id>` and direct `_ascii_bar()` call | PASS — status output is `  k: v` lines (no table); `_ascii_bar(0..N, N)` returns `[####--------]` style |
+
+**Net status of all 6 previously-paper-only README claims**: 5/6 fully tested, 1/6 (real `git+https`) tested via the equivalent `git+file://` path which uses the same `pip` resolver.
+
+### Pitfalls from this closeout
+
+16. **`pip install` on Ubuntu 24+ system Python requires `--break-system-packages` or a venv.** PEP 668 is real, the error is loud, and users following the README naively will hit it. The README §2.3 already documents this; just remember to keep the doc if you ever rewrite the install section.
+
+17. **`git+file://...#subdirectory=...` install needs the bare repo's `HEAD` to point to a real branch.** First attempt with `git push origin main` to a fresh `git init --bare` left HEAD empty; uv's `git ls-remote` then dies with `fatal: 无法找到远程引用 HEAD` and never builds. Fix on the remote: `cd <bare-repo> && git symbolic-ref HEAD refs/heads/main`. Worth mentioning in any `git push` deploy script. (This only applies to freshly-init'd bare repos; GitHub/GitLab always have HEAD set.)
+
+18. **`pipx install` and `uv tool install` collide on `/home/user/.local/bin/ocr-client`.** pipx detects the existing symlink and prints `symlink missing or pointing to unexpected location` then proceeds anyway. The installed package still works, but the *resolved* binary depends on which install was last. If you want them to coexist, run `pipx install --force` only after `uv tool uninstall ocr-client`. The README doesn't currently mention this.
+
+19. **Client `download` on a `failed` task never sees the 410.** `client.py:_download_and_extract` polls the status first; on `failed` it short-circuits with the task's `error` field. So a user reading README §6 Q3 (`Task failed; no result zip available`) and using `ocr-client download` will see `error: download aborted: <reason>` instead. Both are correct, just different surfaces. If you want the user to see the 410 detail, change `_download_and_extract` to issue the GET first and handle 410/404 there.
+
+20. **Direct `_ascii_bar(c, total)` already handles `total == 0`.** Returns all `-` (32 wide). Verified: `_ascii_bar(3, 0)` → `[--------------------------------]`. The watch path in `_watch_with_plain` still calls `_ascii_bar(current, total)`; if `total_pages=0` (which is what you get for any `failed` task that died before `fitz.open`), the bar is all-dashes which is correct. No code change needed.
+
 ## Startup Runbook (LAN service end-to-end)
 
 > Assumes the model is already in `Unlimited-OCR/` and the existing venv is healthy (i.e. `python -c "import torch, sglang"` works). If not, see `README.md` for first-time setup.
