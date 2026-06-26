@@ -2,6 +2,14 @@
 
 High-signal facts for working in this repo. See `CLAUDE.md` for command snippets and detailed inference examples.
 
+## Quick Index
+
+- Architecture (4 paths): see [`docs/architecture.md`](docs/architecture.md)
+- Image modes (5 total, SGLang processor): see [`docs/image-modes-reference.md`](docs/image-modes-reference.md)
+- API wire protocol: see [`API_CONTRACT.md`](API_CONTRACT.md) (中文, canonical) / [`docs/api-contract-en.md`](docs/api-contract-en.md) (English supplement)
+- LAN service user manual: see [`README_API.md`](README_API.md) (中文)
+- Browser frontend manual: see [`web/README.md`](web/README.md) (中文, current); will move to `clients/web/README.md` in Phase 4
+
 ## Architecture
 
 **Two independent inference paths** (do not confuse them):

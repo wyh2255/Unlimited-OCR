@@ -30,6 +30,26 @@
     <img src="assets/Unlimited-OCR.png" width="1000" alt="Unlimited OCR overview" />
 </p>
 
+## What this fork adds
+
+This repository is a local fork of [baidu/Unlimited-OCR](https://github.com/baidu/Unlimited-OCR). Everything below the divider (`---`) is the original upstream README — the model, the Transformers / SGLang inference code, the citations, the license.
+
+The **fork-specific additions** live in the rest of the repo and are documented separately:
+
+| Addition | What it does | Where to start |
+|----------|--------------|----------------|
+| LAN HTTP gateway | Serve the model over the network so multiple laptops can share one GPU | `python server.py --port 10001` (see [`README_API.md`](README_API.md) 中文) |
+| CLI client | Talk to the gateway from a laptop that has no GPU | `python client.py upload my.pdf --watch` |
+| Browser frontend | Vue 3 SPA for non-technical users | `cd web && pnpm dev` (see [`web/README.md`](web/README.md) 中文) |
+| `ocr-client` pip package | Pre-bundled version of the CLI for `uv tool install` / `pipx install` | `uv tool install ./ocr-client` (see [`ocr-client/README.md`](ocr-client/README.md) 中文) |
+| Architecture overview | How the 4 paths relate | [`docs/architecture.md`](docs/architecture.md) |
+| Operational runbook | Server bring-up, daily ops, disk layout, pre-flight checklist | [`AGENTS.md`](AGENTS.md) § Startup Runbook |
+| Wire protocol (中文 canonical / English supplement) | Single source of truth for the HTTP API | [`API_CONTRACT.md`](API_CONTRACT.md) / [`docs/api-contract-en.md`](docs/api-contract-en.md) |
+| Changelog | List of local commits vs upstream | [`CHANGELOG.md`](CHANGELOG.md) |
+
+If you only want to use the model itself, follow the upstream "Inference" section below.
+
+---
 
 ## Release
 - [2026/06/24] 🤝 Thanks to [AK](https://x.com/_akhaliq) for creating a demo for us. It is now available at [Hugging Face Spaces](https://huggingface.co/spaces/baidu/Unlimited-OCR).
