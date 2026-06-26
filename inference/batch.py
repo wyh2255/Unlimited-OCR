@@ -6,9 +6,15 @@ Two input modes are supported:
   2. PDF pages: pass `pdf` and each converted page is sent as one request.
 
 `run_inference()` is the programmatic entry point consumed by `gateway/`.
-`sglang/cli.py` is the CLI entry point.
+`inference/cli.py` is the CLI entry point.
 
 PDF rendering has moved to `model/pdf_render.py` (was duplicated 3x).
+
+Note on package name: this directory was originally called `sglang/` in the
+Phase 3 plan, but that name shadows the actual `sglang` Python package
+(where `sglang.launch_server` and `sglang.srt.sampling.custom_logit_processor`
+live). Renamed to `inference/` to avoid the import collision when the
+repo root is on sys.path.
 """
 
 import argparse

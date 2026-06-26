@@ -13,7 +13,7 @@ This fork ships **four mutually independent inference paths** on top of the upst
 | # | Path | Mode | Use case | Entry (current) | Entry (after Phase 4) |
 |---|------|------|----------|-----------------|-----------------------|
 | 1 | **Transformers (direct)** | Single-GPU, in-process | One-off PDF, simplest setup | `python ocr_pdf.py doc.pdf` | `python ocr_pdf.py doc.pdf` (shim) or `python -m model.ocr_pdf doc.pdf` |
-| 2 | **SGLang batch** | Server + clients, single host | High-throughput batch processing | `python infer.py --pdf doc.pdf --concurrency 8` | `python infer.py …` (shim) or `python -m sglang.cli …` |
+| 2 | **SGLang batch** | Server + clients, single host | High-throughput batch processing | `python infer.py --pdf doc.pdf --concurrency 8` | `python infer.py …` (shim) or `python -m inference.cli …` |
 | 3 | **LAN HTTP gateway** | Network service, multi-client | Share a GPU across the LAN | `python server.py --port 10001` | `python server.py …` (shim) or `python -m gateway.server …` |
 | 4 | **Browser frontend** | Vue 3 SPA over the LAN API | Non-technical end users | `cd web && pnpm dev` | `cd clients/web && pnpm dev` |
 
@@ -40,7 +40,7 @@ This fork ships **four mutually independent inference paths** on top of the upst
 
 - **What it does**: Path 2 + a cleanup step (`postprocess_sglang.py`) that strips `<|det|>` bbox tags, crops image regions from the corresponding PDF page render, replaces them with `![](images/...)`, and merges all pages into one `result.md` joined by `<PAGE>`.
 - **Output**: `<output_dir>/result.md` + `<output_dir>/images/page_NNNN_K.jpg` (4-digit page index, per-image counter, JPEG quality 92).
-- **File**: `postprocess_sglang.py` (229 lines, has dead `parse_page_file` function scheduled for removal in Phase 3).
+- **File**: `inference/postprocess.py` (~180 lines; was 229 in `postprocess_sglang.py` before dead-code removal: `parse_page_file` deleted, unused `import sys` made useful, unused `cursor` variable removed).
 - **PDF rendering**: re-runs PyMuPDF at 300 DPI to get the bbox crops. Requires the original PDF file (`--pdf`).
 
 ## Path 4: LAN HTTP gateway (FastAPI)
@@ -77,18 +77,18 @@ This fork ships **four mutually independent inference paths** on top of the upst
 ┌──────────────┐                ┌──────────────────┐
 │ Transformers  │                │  SGLang (port    │
 │   (direct)    │                │      10000)      │
-│  Path 1       │                │   Path 2         │
-│  ocr_pdf.py   │                │  infer.py        │
-└──────┬───────┘                └─────┬────────────┘
-       │                               │
-       │ result.md                     │ per-page .md (raw)
-       │                               ▼
-       │                       ┌──────────────────┐
-       │                       │ postprocess      │
-       │                       │ postprocess_     │
-       │                       │ sglang.py        │
-       │                       │ Path 3           │
-       │                       └─────┬────────────┘
+        │  Path 1       │                │   Path 2         │
+        │  ocr_pdf.py   │                │  infer.py        │
+        └──────┬───────┘                └─────┬────────────┘
+               │                               │
+               │ result.md                     │ per-page .md (raw)
+               │                               ▼
+               │                       ┌──────────────────┐
+               │                       │ postprocess      │
+               │                       │ inference/       │
+               │                       │ postprocess.py   │
+               │                       │ Path 3           │
+               │                       └─────┬────────────┘
        │                             │ result.md + images/
        │                             ▼
        │                     ┌──────────────────┐

@@ -2,7 +2,7 @@
 Post-process SGLang batch OCR output into clean markdown.
 
 Usage:
-    python -m sglang.postprocess --pdf <pdf_path> --input_dir <sglang_output_dir> [--output_dir <dir>]
+    python -m inference.postprocess --pdf <pdf_path> --input_dir <sglang_output_dir> [--output_dir <dir>]
     # or via the root shim:
     python postprocess_sglang.py --pdf <pdf_path> --input_dir <sglang_output_dir> [--output_dir <dir>]
 

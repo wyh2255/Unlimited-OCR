@@ -19,7 +19,7 @@ import threading
 
 import fitz
 
-from sglang.batch import run_inference
+from inference.batch import run_inference
 
 from .concurrency import detect_concurrency
 from .progress import _poll_progress, _zip_directory
@@ -81,7 +81,7 @@ def _process_task(task: TaskState) -> None:
 
         proc = subprocess.run(
             [
-                sys.executable, "-m", "sglang.postprocess",
+                sys.executable, "-m", "inference.postprocess",
                 "--pdf", task.pdf_path,
                 "--input_dir", sglang_dir,
                 "--output_dir", cleaned_dir,
