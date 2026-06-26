@@ -108,6 +108,8 @@ def start_server(args):
         "--context-length",
         str(CONTEXT_LENGTH),
         "--enable-custom-logit-processor",
+        "--trust-remote-code",
+        "--disable-cuda-graph",
         "--disable-overlap-schedule",
         "--skip-server-warmup",
         "--host",
@@ -299,6 +301,14 @@ def run(args):
         print(f"  Avg decode_time/request: {avg_decode:.2f}s")
     print(f"{'=' * 60}")
 
+    return {
+        "output_dir": args.output_dir,
+        "request_count": len(jobs),
+        "successful": successful,
+        "total_tokens": total_tokens,
+        "wall_time": wall_time,
+    }
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -321,6 +331,33 @@ def main():
     server_process = start_server(args)
     try:
         run(args)
+    finally:
+        stop_server(server_process)
+
+
+def run_inference(
+    *,
+    pdf: str,
+    output_dir: str,
+    concurrency: int,
+    model_dir: str,
+    gpu: str,
+    image_mode: str,
+    server_log: str,
+) -> dict:
+    args = argparse.Namespace(
+        image_dir="",
+        pdf=pdf,
+        output_dir=output_dir,
+        concurrency=concurrency,
+        gpu=gpu,
+        model_dir=model_dir,
+        image_mode=image_mode,
+        server_log=server_log,
+    )
+    server_process = start_server(args)
+    try:
+        return run(args)
     finally:
         stop_server(server_process)
 

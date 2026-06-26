@@ -35,3 +35,20 @@ log/
 Thumbs.db
 .vscode/
 .idea/
+
+# Model weights (large, downloaded separately)
+Unlimited-OCR/
+
+# Test/sample PDFs (large, not source)
+*.pdf
+
+# Output directories from previous runs
+outputs_clean/
+ocr_output_Unlimited-OCR/
+ocr_output_*/
+
+# Sub-projects tracked separately
+ocr-client/
+
+# Test artifacts (uploaded task ZIPs that get re-downloaded)
+f[0-9a-f]*.zip
