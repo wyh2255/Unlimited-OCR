@@ -11,31 +11,14 @@ PDF → OCR → Markdown (单文件输出)
 
 import argparse
 import os
+import re
 import shutil
 import sys
-import tempfile
 
-import fitz
 import torch
 from transformers import AutoModel, AutoTokenizer
 
-PDF_DPI = 300
-
-
-def pdf_to_images(pdf_path: str) -> tuple[list[str], str]:
-    """将 PDF 每页渲染为 PNG 图片，返回 (图片路径列表, 临时目录)。"""
-    doc = fitz.open(pdf_path)
-    tmp_dir = tempfile.mkdtemp(prefix="pdf_ocr_")
-    mat = fitz.Matrix(PDF_DPI / 72, PDF_DPI / 72)
-    images = []
-    try:
-        for i, page in enumerate(doc):
-            out = os.path.join(tmp_dir, f"page_{i + 1:04d}.png")
-            page.get_pixmap(matrix=mat).save(out)
-            images.append(out)
-    finally:
-        doc.close()
-    return images, tmp_dir
+from model.pdf_render import pdf_to_images
 
 
 def load_model(model_dir: str = "baidu/Unlimited-OCR"):
@@ -103,8 +86,7 @@ def run_ocr(pdf_path: str, output_dir: str, model_dir: str,
             content = f.read()
         content = content.replace("<PAGE>", "")
         # 合并连续空行为单个空行
-        import re as _re
-        content = _re.sub(r"\n{3,}", "\n\n", content)
+        content = re.sub(r"\n{3,}", "\n\n", content)
         with open(result_file, "w", encoding="utf-8") as f:
             f.write(content)
 
