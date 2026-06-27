@@ -2,6 +2,46 @@
 
 High-signal facts for working in this repo. See `CLAUDE.md` for command snippets and detailed inference examples.
 
+## Project Memory System
+
+This project maintains institutional knowledge in `docs/project_notes/` for consistency across sessions and AI tools.
+
+### Memory Files
+
+- **bugs.md** - Bug log with dates, solutions, and prevention notes
+- **decisions.md** - Architectural Decision Records (ADRs) with context and trade-offs
+- **key_facts.md** - Project configuration, ports, GPU config, image modes, directory layout
+- **issues.md** - Work log with task descriptions and results
+
+### Memory-Aware Protocols
+
+**Before proposing architectural changes:**
+- Check `docs/project_notes/decisions.md` for existing decisions
+- Verify the proposed approach doesn't conflict with past choices
+- If it does conflict, acknowledge the existing decision and explain why a change is warranted
+
+**When encountering errors or bugs:**
+- Search `docs/project_notes/bugs.md` for similar issues
+- Apply known solutions if found
+- Document new bugs when resolved
+
+**When looking up project configuration:**
+- Check `docs/project_notes/key_facts.md` for ports, GPU config, image modes, directory layout
+- Prefer documented facts over assumptions
+
+**When completing work:**
+- Log completed work in `docs/project_notes/issues.md`
+
+**When user requests memory updates:**
+- Update the appropriate memory file following its established format
+
+### Style Guidelines
+
+- Prefer bullet lists over tables
+- Keep entries concise (1-3 lines)
+- Always include dates
+- Manual cleanup is expected (not automated)
+
 ## Quick Index
 
 - Architecture (4 paths): see [`docs/architecture.md`](docs/architecture.md)
@@ -499,3 +539,41 @@ python -m gateway.server --port 10001 --cors-origin https://ocr.example.com
 5. The token file `~/.ocr_token` is `chmod 600` and the laptop copies it with the same permissions.
 6. `ls .venv/bin/ninja` exists — otherwise sglang's first-request JIT will fail. If missing, `source .venv/bin/activate && pip install ninja` (see Pitfall #14).
 7. If serving the browser frontend, either pass `--cors-origin '*'` (LAN) or set it to the exact frontend origin (production). Without it, the browser will block every API call.
+
+## Project Memory System
+
+This project maintains institutional knowledge in `docs/project_notes/` for consistency across sessions and AI tools.
+
+### Memory Files
+
+- **bugs.md** - Bug log with dates, solutions, and prevention notes
+- **decisions.md** - Architectural Decision Records (ADRs) with context and trade-offs
+- **key_facts.md** - Project configuration, ports, GPU config, image modes, directory layout
+- **issues.md** - Work log with task descriptions and results
+
+### Memory-Aware Protocols
+
+**Before proposing architectural changes:**
+- Check `docs/project_notes/decisions.md` for existing decisions
+- Verify the proposed approach doesn't conflict with past choices
+
+**When encountering errors or bugs:**
+- Search `docs/project_notes/bugs.md` for similar issues
+- Apply known solutions if found
+- Document new bugs when resolved
+
+**When looking up project configuration:**
+- Check `docs/project_notes/key_facts.md` for ports, GPU config, image modes, directory layout
+
+**When completing work:**
+- Log completed work in `docs/project_notes/issues.md`
+
+**When user requests memory updates:**
+- Update the appropriate memory file following its established format
+
+### Style Guidelines
+
+- Prefer bullet lists over tables
+- Keep entries concise (1-3 lines)
+- Always include dates
+- Manual cleanup is expected (not automated)
