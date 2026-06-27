@@ -19,6 +19,8 @@ lines plus links / notes.
 - **Notes**: All Python imports pass, all TS typechecks pass. 2 pre-existing
   ruff warnings (Header, _now_iso — not from this change). Plan at
   `docs/plan/peer-dispatch-plan.md`. ADR-006 in decisions.md.
+  Pushed to remote: commit `9aeea9a` on `feature/web-frontend`.
+  Deployment guide at `docs/3090-wsl2-deployment-guide.md`.
 
 ## 2026-06-26
 
