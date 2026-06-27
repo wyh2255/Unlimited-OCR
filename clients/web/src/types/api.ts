@@ -11,12 +11,25 @@ export interface GpuInfo {
   used_mb: number
 }
 
+export interface PeerHealth {
+  online: boolean
+  name: string
+  free_mb: number
+  concurrency_recommended: number
+  queue_length: number
+  current_task: string | null
+}
+
 export interface HealthResponse {
   status: 'ok'
   gpu: GpuInfo
   concurrency_recommended: number
   queue_length: number
   current_task: string | null
+  // New peer dispatch fields (optional for backward compat)
+  self?: GpuInfo & { concurrency_recommended: number; queue_length: number; current_task: string | null }
+  peers?: Record<string, PeerHealth>
+  best_target?: string
 }
 
 export interface UploadResponse {
@@ -63,4 +76,5 @@ export interface LocalTaskMeta {
   created_local: string
   last_seen_status: TaskStatus | null
   last_polled: string | null
+  backend_url: string  // which server this task was submitted to
 }

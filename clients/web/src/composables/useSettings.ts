@@ -4,12 +4,14 @@ const STORAGE_KEY = 'unlimited-ocr.settings.v1'
 
 export interface AppSettings {
   serverUrl: string
+  fallbackUrl: string   // NEW
   token: string
   autoWatch: boolean
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
   serverUrl: 'http://127.0.0.1:10001',
+  fallbackUrl: '',       // empty means fallback disabled
   token: '',
   autoWatch: true,
 }
@@ -45,4 +47,8 @@ export function useSettings(): { settings: Ref<AppSettings> } {
 
 export function resetSettings(): void {
   state.value = { ...DEFAULT_SETTINGS }
+}
+
+export function hasFallback(): boolean {
+  return !!state.value.fallbackUrl && state.value.fallbackUrl !== state.value.serverUrl
 }

@@ -18,6 +18,7 @@ from .auth import get_token
 from .concurrency import _get_gpu_info, detect_concurrency
 from .state import STATE, TaskState, _now_iso, _task_to_dict
 from .tasks import _worker_loop
+from .peers import PeerConfig, probe_peer, select_best_backend, proxy_upload, proxy_request
 
 
 MAX_PDF_BYTES = 200 * 1024 * 1024
@@ -34,21 +35,75 @@ app.add_middleware(
 )
 
 
-@app.get("/api/v1/health")
-def health() -> dict:
+def _get_backend_for_task(task_id: str) -> Optional[str]:
     with STATE.lock:
-        current_task_id: Optional[str] = None
+        return STATE.proxied.get(task_id)
+
+
+def _find_peer(peer_url: str) -> Optional[PeerConfig]:
+    for p in STATE.peers:
+        if p.url == peer_url:
+            return p
+    return None
+
+
+def _build_self_health() -> dict:
+    gpu = _get_gpu_info(STATE.gpu_index)
+    with STATE.lock:
+        current_task: Optional[str] = None
         for t in STATE.tasks.values():
             if t.status == "running":
-                current_task_id = t.task_id
+                current_task = t.task_id
                 break
         queue_length = STATE.queue.qsize()
     return {
-        "status": "ok",
-        "gpu": _get_gpu_info(STATE.gpu_index),
+        "name": gpu.get("name", "unknown"),
+        "gpu": gpu,
         "concurrency_recommended": detect_concurrency(STATE.gpu_index),
         "queue_length": queue_length,
-        "current_task": current_task_id,
+        "current_task": current_task,
+        "free_mb": gpu.get("free_mb", 0),
+    }
+
+
+def _probe_peers() -> dict[str, Optional[dict]]:
+    result: dict[str, Optional[dict]] = {}
+    for p in STATE.peers:
+        result[p.url] = probe_peer(p)
+    return result
+
+
+@app.get("/api/v1/health")
+def health() -> dict:
+    self_health = _build_self_health()
+    peers_health = _probe_peers() if STATE.peers else {}
+    best_target = select_best_backend(self_health, peers_health)
+
+    peers_out: dict[str, dict] = {}
+    for p in STATE.peers:
+        ph = peers_health.get(p.url)
+        if ph is not None:
+            peers_out[p.url] = {
+                "online": True,
+                "name": ph.get("name", "unknown"),
+                "gpu": ph.get("gpu", {}),
+                "concurrency_recommended": ph.get("concurrency_recommended", 0),
+                "queue_length": ph.get("queue_length", 0),
+                "current_task": ph.get("current_task"),
+            }
+        else:
+            peers_out[p.url] = {"online": False}
+
+    return {
+        "status": "ok",
+        "self": self_health,
+        "peers": peers_out,
+        "best_target": best_target,
+        # Backward-compat fields
+        "gpu": self_health["gpu"],
+        "concurrency_recommended": self_health["concurrency_recommended"],
+        "queue_length": self_health["queue_length"],
+        "current_task": self_health["current_task"],
     }
 
 
@@ -69,6 +124,39 @@ async def create_task(
     if not content.startswith(b"%PDF-"):
         raise HTTPException(status_code=400, detail="uploaded file is not a valid PDF")
 
+    # Peer dispatch logic
+    if STATE.peers:
+        self_health = _build_self_health()
+        peers_health = _probe_peers()
+        best = select_best_backend(self_health, peers_health)
+    else:
+        best = "self"
+
+    if best != "self":
+        peer = _find_peer(best)
+        if peer is None:
+            raise HTTPException(status_code=500, detail=f"selected peer {best} not found in config")
+
+        resp = proxy_upload(peer, content, image_mode, concurrency_hint)
+        if resp.status_code == 202:
+            data = resp.json()
+            with STATE.lock:
+                STATE.proxied[data["task_id"]] = best
+            return {
+                "task_id": data["task_id"],
+                "status": data["status"],
+                "image_mode": data.get("image_mode", image_mode),
+                "concurrency_hint": concurrency_hint,
+                "backend": best,
+            }
+        else:
+            try:
+                detail = resp.json().get("detail", resp.reason)
+            except Exception:
+                detail = resp.reason or "unknown peer error"
+            raise HTTPException(status_code=502, detail=f"peer forward failed ({resp.status_code}): {detail}")
+
+    # Existing local processing (unchanged)
     task_id = uuid.uuid4().hex[:12]
     work_subdir = os.path.join(STATE.workdir, "tmp", task_id)
     os.makedirs(work_subdir, exist_ok=True)
@@ -97,6 +185,16 @@ async def create_task(
 
 @app.get("/api/v1/tasks/{task_id}", dependencies=[Depends(get_token)])
 def get_task(task_id: str) -> dict:
+    peer_url = _get_backend_for_task(task_id)
+    if peer_url:
+        peer = _find_peer(peer_url)
+        if peer is None:
+            raise HTTPException(status_code=500, detail=f"peer {peer_url} not found")
+        resp = proxy_request(peer, "GET", f"/api/v1/tasks/{task_id}")
+        if resp.status_code == 200:
+            return resp.json()
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+
     with STATE.lock:
         task = STATE.tasks.get(task_id)
         if task is None:
@@ -106,6 +204,17 @@ def get_task(task_id: str) -> dict:
 
 @app.get("/api/v1/tasks/{task_id}/download", dependencies=[Depends(get_token)])
 def download_task(task_id: str):
+    peer_url = _get_backend_for_task(task_id)
+    if peer_url:
+        peer = _find_peer(peer_url)
+        if peer is None:
+            raise HTTPException(status_code=500, detail=f"peer {peer_url} not found")
+        resp = proxy_request(peer, "GET", f"/api/v1/tasks/{task_id}/download")
+        if resp.status_code == 200:
+            return Response(content=resp.content, media_type="application/zip",
+                            headers={"Content-Disposition": f'attachment; filename="{task_id}.zip"'})
+        raise HTTPException(status_code=resp.status_code, detail=resp.text)
+
     with STATE.lock:
         task = STATE.tasks.get(task_id)
     if task is None:
@@ -126,6 +235,15 @@ def download_task(task_id: str):
 
 @app.delete("/api/v1/tasks/{task_id}", dependencies=[Depends(get_token)])
 def delete_task(task_id: str) -> Response:
+    peer_url = _get_backend_for_task(task_id)
+    if peer_url:
+        peer = _find_peer(peer_url)
+        if peer:
+            proxy_request(peer, "DELETE", f"/api/v1/tasks/{task_id}")
+        with STATE.lock:
+            STATE.proxied.pop(task_id, None)
+        return Response(status_code=204)
+
     with STATE.lock:
         task = STATE.tasks.pop(task_id, None)
     if task is None:
@@ -167,6 +285,15 @@ def _parse_args() -> argparse.Namespace:
             "Use '*' for any (LAN default). Example: --cors-origin http://192.168.1.10:5173"
         ),
     )
+    parser.add_argument(
+        "--peers",
+        action="append",
+        default=None,
+        help=(
+            "Peer gateway URLs and tokens. Format: 'http://host:port,token'. "
+            "May be passed multiple times. Example: --peers http://192.168.1.100:10001,my-token"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -194,6 +321,16 @@ def main() -> None:
         expose_headers=["Content-Disposition"],
     )
     print(f"[server] CORS allow_origins={origins}", flush=True)
+
+    # Parse peers
+    if args.peers:
+        for p in args.peers:
+            if "," not in p:
+                print(f"[server] WARNING: malformed --peers '{p}' (missing token), ignoring", flush=True)
+                continue
+            url, token_val = p.rsplit(",", 1)
+            STATE.peers.append(PeerConfig(url=url.rstrip("/"), token=token_val))
+        print(f"[server] Peers configured: {[p.url for p in STATE.peers]}", flush=True)
 
     token = os.environ.get("OCR_API_TOKEN", "").strip()
     if not token:

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { ImageMode, LocalTaskMeta } from '@/types/api'
-import { ApiClientError, useApi } from '@/composables/useApi'
+import { ApiClientError, MultiServerApiClient, initMultiServer } from '@/composables/useApi'
 import { useSettings } from '@/composables/useSettings'
 import { useTaskStore } from '@/composables/useTaskStore'
 import { useToast } from '@/composables/useToast'
@@ -11,6 +11,11 @@ const emit = defineEmits<{
 }>()
 
 const { settings } = useSettings()
+
+initMultiServer(
+  () => settings.value.serverUrl,
+  () => settings.value.fallbackUrl,
+)
 const taskStore = useTaskStore()
 const toast = useToast()
 
@@ -36,7 +41,13 @@ const canUpload = computed(() => {
   return !!file.value && fileOk.value === null && !uploading.value
 })
 
-const api = computed(() => useApi(settings.value.serverUrl, settings.value.token))
+const multiApi = computed(() => {
+  return new MultiServerApiClient(
+    settings.value.serverUrl,
+    settings.value.fallbackUrl,
+    settings.value.token,
+  )
+})
 
 function formatSize(b: number): string {
   if (b >= 1024 * 1024) return `${(b / 1024 / 1024).toFixed(2)} MB`
@@ -82,7 +93,7 @@ async function submit(): Promise<void> {
   uploading.value = true
   uploadProgress.value = 0
   try {
-    const resp = await api.value.upload({
+    const resp = await multiApi.value.upload({
       file: file.value,
       imageMode: imageMode.value,
       concurrencyHint: concurrencyAuto.value ? null : concurrencyHint.value,
@@ -100,6 +111,7 @@ async function submit(): Promise<void> {
       created_local: new Date().toISOString(),
       last_seen_status: resp.status,
       last_polled: new Date().toISOString(),
+      backend_url: (resp as any).backend || settings.value.serverUrl,
     }
     taskStore.add(meta)
     toast.success(`已上传 · task ${resp.task_id} · 模式 ${resp.image_mode}`)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 
 
@@ -20,6 +21,23 @@ def detect_concurrency(gpu_index: int = 0) -> int:
     except Exception:
         return 2
     free_gb = free_mb / 1024.0
+
+    tiers_env = os.environ.get("OCR_CONCURRENCY_TIERS", "")
+    if tiers_env:
+        try:
+            tiers = []
+            for part in tiers_env.split(","):
+                if ":" not in part:
+                    continue
+                threshold_s, conc_s = part.split(":", 1)
+                tiers.append((float(threshold_s), int(conc_s)))
+            tiers.sort(reverse=True)
+            for threshold, conc in tiers:
+                if free_gb >= threshold:
+                    return conc
+        except (ValueError, AttributeError):
+            pass  # malformed → fall through to defaults
+
     if free_gb >= 30.0:
         return 8
     if free_gb >= 10.0:

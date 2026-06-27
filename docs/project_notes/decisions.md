@@ -4,6 +4,33 @@ Lightweight ADRs for this repo. Newest first; older entries kept for context.
 
 ---
 
+### ADR-006: Peer Dispatch 对等调度架构 (2026-06-27)
+
+**Context:**
+- 需要利用第二块 GPU（RTX 3090 24GB，Windows 10 WSL2）分担 OCR 负载
+- 当一台机器不可用（关机/网络中断）时系统必须能继续工作
+- 前端用户只需要知道一个 URL
+
+**Decision:**
+- 双节点对等架构：每台机器运行完整 gateway + worker + SGLang
+- 上传时通过 HTTP 探测对等节点 `/health`，根据空闲程度调度
+- 被调度到对等节点的任务通过透明代理转发状态/下载/删除请求
+- 无需共享存储、无需消息队列、无需额外基础设施
+- A100 是默认优先连接的地址，3090 是备用
+
+**Alternatives Considered:**
+- 主从架构（A100 调度，3090 只做 worker）→ A100 挂了整个系统不可用
+- 前端 DNS 轮询 → 无法感知后端负载，可能把任务发给正在忙的节点
+- Redis/Celery 消息队列 → 增加基础设施复杂度，违反"无外部依赖"设计原则
+
+**Consequences:**
+- A100 增加少量额外负担（探测 + 转发 PDF），LAN 内可忽略 (<1s)
+- PDF 内容经过内存中转（最大 200 MB），LAN 内足够快
+- 对等节点重启不影响已提交的任务记录（任务状态在提交的机器上维护）
+- 向后兼容：旧客户端看到的 health 字段不变，仅新增 `self`/`peers`/`best_target`
+
+---
+
 ### ADR-005: Split web frontend into scaffold + components commits (2026-06-26)
 
 **Context:**

@@ -8,24 +8,28 @@ const showToken = ref(false)
 const editing = ref(false)
 const draftUrl = ref(settings.value.serverUrl)
 const draftToken = ref(settings.value.token)
+const draftFallback = ref(settings.value.fallbackUrl)
 
 watch(
-  () => [settings.value.serverUrl, settings.value.token],
-  ([u, t]) => {
+  () => [settings.value.serverUrl, settings.value.token, settings.value.fallbackUrl],
+  ([u, t, f]) => {
     draftUrl.value = String(u)
     draftToken.value = String(t)
+    draftFallback.value = String(f)
   },
 )
 
 function open() {
   draftUrl.value = settings.value.serverUrl
   draftToken.value = settings.value.token
+  draftFallback.value = settings.value.fallbackUrl
   editing.value = true
 }
 
 function save() {
   settings.value.serverUrl = draftUrl.value.trim() || settings.value.serverUrl
   settings.value.token = draftToken.value.trim()
+  settings.value.fallbackUrl = draftFallback.value.trim()
   editing.value = false
 }
 
@@ -51,6 +55,7 @@ function cancel() {
     <div class="topbar__right">
       <div v-if="!editing" class="topbar__summary" @click="open">
         <span class="mono summary-url" :title="settings.serverUrl">{{ settings.serverUrl }}</span>
+        <span v-if="settings.fallbackUrl" class="badge badge--muted">备用</span>
         <span class="badge badge--muted">
           {{ settings.token ? 'token 已设置' : '未设 token' }}
         </span>
@@ -86,6 +91,15 @@ function cancel() {
               {{ showToken ? '隐藏' : '显示' }}
             </button>
           </div>
+        </div>
+        <div class="topbar__form-row">
+          <span class="label">备用地址 (Fallback)</span>
+          <input
+            v-model="draftFallback"
+            class="input"
+            placeholder="http://192.168.1.100:10001 (可空)"
+            @keyup.enter="save"
+          />
         </div>
         <div class="topbar__form-actions">
           <button class="btn btn--secondary btn--sm" @click="cancel">取消</button>

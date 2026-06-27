@@ -207,6 +207,127 @@ function triggerDownload(blob: Blob, fileName: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
+export class MultiServerApiClient {
+  private primary: ApiClient
+  private fallback: ApiClient | null
+  private taskBackend: Map<string, string>
+
+  constructor(
+    primaryUrl: string,
+    fallbackUrl: string,
+    token: string,
+  ) {
+    this.primary = new ApiClient(primaryUrl, token)
+    this.fallback = fallbackUrl
+      ? new ApiClient(fallbackUrl, token)
+      : null
+    this.taskBackend = new Map()
+  }
+
+  setCredentials(primaryUrl: string, fallbackUrl: string, token: string): void {
+    this.primary.setCredentials(primaryUrl, token)
+    this.fallback = fallbackUrl
+      ? new ApiClient(fallbackUrl, token)
+      : null
+    this.taskBackend.clear()
+  }
+
+  async health(): Promise<HealthResponse> {
+    return this.primary.health()
+  }
+
+  async upload(opts: UploadOptions): Promise<UploadResponse & { backend?: string }> {
+    interface HealthResult {
+      client: ApiClient
+      url: string
+      health: HealthResponse | null
+      error: boolean
+    }
+
+    const candidates: { client: ApiClient; url: string }[] = [
+      { client: this.primary, url: getPrimaryUrl() },
+    ]
+    if (this.fallback) {
+      candidates.push({ client: this.fallback, url: getFallbackUrl() })
+    }
+
+    const results: HealthResult[] = await Promise.all(
+      candidates.map(async (c) => {
+        try {
+          const h = await c.client.health()
+          return { client: c.client, url: c.url, health: h, error: false }
+        } catch {
+          return { client: c.client, url: c.url, health: null, error: true }
+        }
+      }),
+    )
+
+    const available = results.filter((r): r is HealthResult & { health: HealthResponse } => !r.error && r.health !== null)
+    if (available.length === 0) {
+      const resp = await this.primary.upload(opts)
+      this.taskBackend.set(resp.task_id, getPrimaryUrl())
+      return { ...resp, backend: getPrimaryUrl() }
+    }
+
+    available.sort((a, b) => {
+      const aIdle = a.health.current_task === null ? 0 : 1
+      const bIdle = b.health.current_task === null ? 0 : 1
+      if (aIdle !== bIdle) return aIdle - bIdle
+      const aQ = a.health.queue_length ?? 0
+      const bQ = b.health.queue_length ?? 0
+      if (aQ !== bQ) return aQ - bQ
+      if (a.url === getPrimaryUrl()) return -1
+      if (b.url === getPrimaryUrl()) return 1
+      return 0
+    })
+
+    const chosen = available[0]
+    const resp = await chosen.client.upload(opts)
+    this.taskBackend.set(resp.task_id, chosen.url)
+    return { ...resp, backend: chosen.url }
+  }
+
+  async getTask(taskId: string): Promise<TaskInfo> {
+    return this._getClient(taskId).getTask(taskId)
+  }
+
+  async deleteTask(taskId: string): Promise<void> {
+    return this._getClient(taskId).deleteTask(taskId)
+  }
+
+  async downloadResult(taskId: string, fileName: string, onProgress?: (loaded: number, total: number) => void): Promise<void> {
+    return this._getClient(taskId).downloadResult(taskId, fileName, onProgress)
+  }
+
+  async fetchResultBlob(taskId: string): Promise<Blob> {
+    return this._getClient(taskId).fetchResultBlob(taskId)
+  }
+
+  private _getClient(taskId: string): ApiClient {
+    const url = this.taskBackend.get(taskId)
+    const fallbackUrl = getFallbackUrl()
+    if (url && fallbackUrl && url === fallbackUrl && this.fallback) {
+      return this.fallback
+    }
+    return this.primary
+  }
+}
+
+// Module-level helpers to read settings
+let _getPrimaryUrl: () => string = () => ''
+let _getFallbackUrl: () => string = () => ''
+
+export function initMultiServer(
+  getPrimaryUrlFn: () => string,
+  getFallbackUrlFn: () => string,
+): void {
+  _getPrimaryUrl = getPrimaryUrlFn
+  _getFallbackUrl = getFallbackUrlFn
+}
+
+function getPrimaryUrl(): string { return _getPrimaryUrl() }
+function getFallbackUrl(): string { return _getFallbackUrl() }
+
 let _client: ApiClient | null = null
 let _clientKey = ''
 

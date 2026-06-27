@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
 
+from .peers import PeerConfig
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -34,10 +36,11 @@ class TaskState:
     finished_at: Optional[str] = None
     pdf_path: str = ""
     work_subdir: str = ""
+    backend_url: str = ""
 
 
 def _task_to_dict(task: TaskState) -> dict:
-    return {
+    d: dict = {
         "task_id": task.task_id,
         "status": task.status,
         "progress": round(task.progress, 4),
@@ -50,6 +53,9 @@ def _task_to_dict(task: TaskState) -> dict:
         "started_at": task.started_at,
         "finished_at": task.finished_at,
     }
+    if task.backend_url:
+        d["backend_url"] = task.backend_url
+    return d
 
 
 class _State:
@@ -62,6 +68,8 @@ class _State:
         self.lock = threading.Lock()
         self.queue: "queue.Queue[str]" = queue.Queue()
         self.logs_dir: str = ""
+        self.peers: list[PeerConfig] = []
+        self.proxied: dict[str, str] = {}
 
 
 STATE = _State()

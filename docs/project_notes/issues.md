@@ -3,6 +3,23 @@
 Date-ordered log of completed work. Newest first. Each entry should be 1–3
 lines plus links / notes.
 
+## 2026-06-27
+
+### Peer dispatch — implementation complete
+
+- **Status**: Phase 1 Done · Phase 2 Done · Phase 3 Done
+- **Description**: Three subagents implemented the full peer dispatch:
+  - **Phase 1-A**: `gateway/peers.py` (PeerConfig, probe, select, proxy),
+    `gateway/state.py` (+backend_url, +peers, +proxied),
+    `gateway/concurrency.py` (+OCR_CONCURRENCY_TIERS env var)
+  - **Phase 1-B**: `gateway/server.py` (+--peers CLI, upload dispatch,
+     endpoint proxy for GET/DELETE/download, enhanced health with self/peers)
+  - **Phase 2**: Web frontend multi-server support (MultiServerApiClient,
+     fallback URL in settings, health badge peer display, upload router)
+- **Notes**: All Python imports pass, all TS typechecks pass. 2 pre-existing
+  ruff warnings (Header, _now_iso — not from this change). Plan at
+  `docs/plan/peer-dispatch-plan.md`. ADR-006 in decisions.md.
+
 ## 2026-06-26
 
 ### Web frontend feature merged into `feature/web-frontend`

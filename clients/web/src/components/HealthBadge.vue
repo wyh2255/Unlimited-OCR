@@ -62,6 +62,18 @@ const queueText = computed(() => {
   return `排队 ${d.queue_length}`
 })
 
+const peerSummary = computed(() => {
+  if (!data.value?.peers) return null
+  const entries = Object.entries(data.value.peers)
+  if (entries.length === 0) return null
+  return entries
+    .map(([id, peer]) => {
+      if (!peer.online) return `${id} · offline`
+      return `${peer.name} · ${formatMb(peer.free_mb)} free`
+    })
+    .join(' | ')
+})
+
 function formatMb(mb: number): string {
   if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`
   return `${mb} MB`
@@ -112,6 +124,9 @@ defineExpose({ refresh })
         {{ queueText }} ·
         <a href="#" @click.prevent="refresh">{{ loading ? '刷新中…' : '手动刷新' }}</a>
       </div>
+      <div v-if="peerSummary" class="health__peers muted">
+        {{ peerSummary }}
+      </div>
     </div>
   </div>
 </template>
@@ -138,6 +153,10 @@ defineExpose({ refresh })
   max-width: 460px;
 }
 .health__sub {
+  font-size: 11px;
+  margin-top: 2px;
+}
+.health__peers {
   font-size: 11px;
   margin-top: 2px;
 }
