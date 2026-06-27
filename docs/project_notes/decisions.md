@@ -4,6 +4,34 @@ Lightweight ADRs for this repo. Newest first; older entries kept for context.
 
 ---
 
+### ADR-007: Peer 健康探测改用后台缓存而非同步阻塞 (2026-06-27)
+
+**Context:**
+- 双 Gateway 互指 `--peers` 时，A 的 `/health` 会同步探测 B，B 的 `/health` 又探测 A
+- 形成递归调用链：A→B→A→B... 每个请求阻塞等待响应
+- WSL2 环境下 http_proxy 导致本地请求也有 ~5s 延迟
+- 合成效果：一次 health 请求耗时 6-8s，peers 仍显示 `online: false`
+
+**Decision:**
+- 新增后台守护线程 `_update_peer_cache()`，每 15s 探测所有 peers
+- `_probe_peers()` 改为读取缓存，不阻塞 health 响应
+- `_State.peer_cache` + `_State.peer_cache_lock` 存储缓存
+- 启动时调用 `_initial_peer_cache_sync()` 填充初始缓存
+- 单次 probe 超时 5s（原 3s），给首次连接足够时间
+
+**Alternatives Considered:**
+- 同步探测 + 短超时（1s）→ 每次 health 都报 peer offline，前端看不到真实状态
+- 移除 peer 探测 → `best_target` 永远返回 self，peer dispatch 变单机
+- `asyncio.to_thread` + 超时 → 仍可能阻塞线程池，且 uvicorn sync handler 配合复杂
+
+**Consequences:**
+- health 响应从 6-8s 降至 ~0.18s（仅 nvidia-smi 查询时间）
+- peers 状态最多 15s 延迟（后台轮询间隔），对上传调度足够
+- 启动时增加 ~5-10s 初始化延迟（同步探测所有 peers）
+- 新增内存开销：peer_cache 字典（< 1 KB 每 peer）
+
+---
+
 ### ADR-006: Peer Dispatch 对等调度架构 (2026-06-27)
 
 **Context:**
