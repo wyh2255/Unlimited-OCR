@@ -70,6 +70,8 @@ class _State:
         self.logs_dir: str = ""
         self.peers: list[PeerConfig] = []
         self.proxied: dict[str, str] = {}
+        self.peer_cache: dict[str, Optional[dict]] = {}
+        self.peer_cache_lock = threading.Lock()
 
 
 STATE = _State()

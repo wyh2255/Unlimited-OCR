@@ -5,6 +5,16 @@ lines plus links / notes.
 
 ## 2026-06-27
 
+### 双 3090 WSL2 部署完成 — 单机双卡对等集群
+
+- **Status**: Completed
+- **Description**: 按 `docs/3090-wsl2-deployment-guide.md（双卡版）` 完成完整部署：
+  - 仓库克隆、uv venv + pyproject.toml、依赖安装（torch 2.9.1, sglang, pymupdf, ninja）
+  - Windows 防火墙放行 + 端口转发 10001/10002
+  - 两个 Gateway 实例：GPU0 → 10001, GPU1 → 10002，`--peers` 互指
+  - 修复 peer 健康探测递归阻塞问题（缓存化 + 后台 15s 轮询），health 响应从 ~6s 降至 ~0.18s
+  - 双卡 peer 互检 online，`best_target` 自动选择空闲卡
+
 ### Peer dispatch — implementation complete
 
 - **Status**: Phase 1 Done · Phase 2 Done · Phase 3 Done

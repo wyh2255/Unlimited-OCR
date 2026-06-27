@@ -100,7 +100,7 @@ uv pip install wheel/sglang-0.0.0.dev11416+g92e8bb79e-py3-none-any.whl
 uv pip install kernels==0.11.7 pymupdf==1.27.2.2
 ```
 
-**No `pyproject.toml` or `setup.py`** — not a pip-installable package. Dependencies are listed in README only.
+**Root `pyproject.toml`** — exists only for Python version pinning (`requires-python = ">=3.12"`) and `uv` project awareness. Not a pip-installable package; no `setup.py`.
 
 ## Dev Tools (hinted by `.gitignore`, no config files verified)
 
@@ -338,6 +338,10 @@ After Round 2, the `ocr-client` package was packaged and the README had 6 sectio
 19. **Client `download` on a `failed` task never sees the 410.** `clients/python-cli/src/ocr_client/cli.py:_download_and_extract` polls the status first; on `failed` it short-circuits with the task's `error` field. So a user reading README §6 Q3 (`Task failed; no result zip available`) and using `ocr-client download` will see `error: download aborted: <reason>` instead. Both are correct, just different surfaces. If you want the user to see the 410 detail, change `_download_and_extract` to issue the GET first and handle 410/404 there.
 
 20. **Direct `_ascii_bar(c, total)` already handles `total == 0`.** Returns all `-` (32 wide). Verified: `_ascii_bar(3, 0)` → `[--------------------------------]`. The watch path in `_watch_with_plain` still calls `_ascii_bar(current, total)`; if `total_pages=0` (which is what you get for any `failed` task that died before `fitz.open`), the bar is all-dashes which is correct. No code change needed.
+
+21. **WSL2 proxy env vars (`http_proxy`/`https_proxy`) cause 5-7s latency on all HTTP requests.** When a proxy is configured in WSL2 (e.g., `http://192.168.176.1:7892`), even `127.0.0.1` loopback requests go through the proxy. The `requests.Session(trust_env=False)` + `session.proxies = {"http": "", "https": ""}` pattern bypasses this. Always launch Gateway with `env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY` or set these in the server startup script.
+
+22. **Peer health probing creates recursive mutual calls when two gateways peer each other.** When Gateway A's health endpoint probes B's health, B's handler also probes A — creating exponential recursive probing. Each probe issues a synchronous HTTP GET, so the handler blocks. Fix: `gateway/server.py` uses a **background peer cache** (`_update_peer_cache`) that runs in a daemon thread every 15s. The health endpoint reads from this cache (instant, no blocking). Implementation: `_State.peer_cache` dict + `_State.peer_cache_lock` in `state.py`; `_initial_peer_cache_sync()` fills at startup; `_probe_peers()` returns cached data. See `gateway/peers.py:probe_peer` default timeout 5.0s.
 
 ## Startup Runbook (LAN service end-to-end)
 

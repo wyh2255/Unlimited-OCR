@@ -15,10 +15,11 @@ class PeerConfig:
 def _make_session() -> requests.Session:
     session = requests.Session()
     session.trust_env = False  # avoid proxy interference (project convention)
+    session.proxies = {"http": "", "https": ""}  # force direct connection
     return session
 
 
-def probe_peer(peer: PeerConfig, timeout: float = 3.0) -> Optional[dict]:
+def probe_peer(peer: PeerConfig, timeout: float = 5.0) -> Optional[dict]:
     """GET /api/v1/health of a peer. Returns dict on success, None on failure/timeout."""
     session = _make_session()
     try:

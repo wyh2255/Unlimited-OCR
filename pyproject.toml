@@ -1,0 +1,5 @@
+[project]
+name = "unlimited-ocr"
+version = "0.1.0"
+description = "Unlimited-OCR — high-throughput OCR on PDFs with SGLang"
+requires-python = ">=3.12"

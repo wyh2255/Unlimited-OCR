@@ -127,7 +127,7 @@ queued → running → (completed | failed)
 
 - All web work lives on the `feature/web-frontend` branch (off main).
   Main only has README history.
-- No `pyproject.toml` / `setup.py` — not a pip-installable package.
+- Root `pyproject.toml` — exists only for Python version pinning (`requires-python = ">=3.12"`) and `uv` project awareness. Not a pip-installable package; no `setup.py`.
   Dependencies are listed in README and `requirements-api.txt`.
 - The `ocr-client/` subdirectory is a separate packaging project, not
   related to `clients/web/`. Gitignored at the repo root.

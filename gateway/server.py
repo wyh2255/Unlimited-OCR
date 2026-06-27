@@ -67,10 +67,30 @@ def _build_self_health() -> dict:
 
 
 def _probe_peers() -> dict[str, Optional[dict]]:
-    result: dict[str, Optional[dict]] = {}
+    with STATE.peer_cache_lock:
+        return dict(STATE.peer_cache)
+
+
+def _update_peer_cache() -> None:
+    """Background thread: periodically probe peers and cache results."""
+    while True:
+        fresh: dict[str, Optional[dict]] = {}
+        for p in STATE.peers:
+            fresh[p.url] = probe_peer(p, timeout=5.0)
+        with STATE.peer_cache_lock:
+            STATE.peer_cache.clear()
+            STATE.peer_cache.update(fresh)
+        threading.Event().wait(15.0)  # re-probe every 15 seconds
+
+
+def _initial_peer_cache_sync() -> None:
+    """Fill peer cache synchronously at startup (called from main())."""
+    fresh: dict[str, Optional[dict]] = {}
     for p in STATE.peers:
-        result[p.url] = probe_peer(p)
-    return result
+        fresh[p.url] = probe_peer(p, timeout=5.0)
+    with STATE.peer_cache_lock:
+        STATE.peer_cache.clear()
+        STATE.peer_cache.update(fresh)
 
 
 @app.get("/api/v1/health")
@@ -340,6 +360,14 @@ def main() -> None:
 
     worker = threading.Thread(target=_worker_loop, daemon=True)
     worker.start()
+
+    if STATE.peers:
+        print("[server] Populating initial peer cache ...", flush=True)
+        _initial_peer_cache_sync()
+        print(f"[server] Peer cache: { {k: 'ok' if v else 'FAIL' for k, v in STATE.peer_cache.items()} }", flush=True)
+        cache_updater = threading.Thread(target=_update_peer_cache, daemon=True)
+        cache_updater.start()
+        print("[server] Peer cache updater started (15s interval)", flush=True)
 
     import uvicorn
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
