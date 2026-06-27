@@ -103,9 +103,10 @@ def health() -> dict:
     for p in STATE.peers:
         ph = peers_health.get(p.url)
         if ph is not None:
+            peer_self = ph.get("self", {})
             peers_out[p.url] = {
                 "online": True,
-                "name": ph.get("name", "unknown"),
+                "name": peer_self.get("name", "unknown"),
                 "gpu": ph.get("gpu", {}),
                 "concurrency_recommended": ph.get("concurrency_recommended", 0),
                 "queue_length": ph.get("queue_length", 0),
