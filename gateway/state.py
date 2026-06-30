@@ -70,6 +70,7 @@ class _State:
         self.logs_dir: str = ""
         self.peers: list[PeerConfig] = []
         self.proxied: dict[str, str] = {}
+        self.pandoc_pdf_engine: str = "weasyprint"
 
 
 STATE = _State()

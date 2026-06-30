@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse
 
 from .auth import get_token
 from .concurrency import _get_gpu_info, detect_concurrency
+from .convert import SUPPORTED_FORMATS, ConversionError, convert_result
 from .state import STATE, TaskState, _now_iso, _task_to_dict
 from .tasks import _worker_loop
 from .peers import PeerConfig, probe_peer, select_best_backend, proxy_upload, proxy_request
@@ -45,6 +46,21 @@ def _find_peer(peer_url: str) -> Optional[PeerConfig]:
         if p.url == peer_url:
             return p
     return None
+
+
+def _media_for_format(fmt: str, task_id: str) -> tuple[str, str]:
+    """Return (media_type, filename) for a download format."""
+    table = {
+        "md": ("application/zip", f"{task_id}.zip"),
+        "docx": (
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            f"{task_id}.docx",
+        ),
+        "html": ("text/html", f"{task_id}.html"),
+        "pdf": ("application/pdf", f"{task_id}.pdf"),
+        "latex": ("application/x-latex", f"{task_id}.tex"),
+    }
+    return table[fmt]
 
 
 def _build_self_health() -> dict:
@@ -204,16 +220,28 @@ def get_task(task_id: str) -> dict:
 
 
 @app.get("/api/v1/tasks/{task_id}/download", dependencies=[Depends(get_token)])
-def download_task(task_id: str):
+def download_task(task_id: str, format: str = "md"):
+    if format not in SUPPORTED_FORMATS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"format must be one of {SUPPORTED_FORMATS}",
+        )
+
     peer_url = _get_backend_for_task(task_id)
     if peer_url:
         peer = _find_peer(peer_url)
         if peer is None:
             raise HTTPException(status_code=500, detail=f"peer {peer_url} not found")
-        resp = proxy_request(peer, "GET", f"/api/v1/tasks/{task_id}/download")
+        resp = proxy_request(
+            peer, "GET", f"/api/v1/tasks/{task_id}/download?format={format}"
+        )
         if resp.status_code == 200:
-            return Response(content=resp.content, media_type="application/zip",
-                            headers={"Content-Disposition": f'attachment; filename="{task_id}.zip"'})
+            media, filename = _media_for_format(format, task_id)
+            return Response(
+                content=resp.content,
+                media_type=media,
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            )
         raise HTTPException(status_code=resp.status_code, detail=resp.text)
 
     with STATE.lock:
@@ -221,17 +249,29 @@ def download_task(task_id: str):
     if task is None:
         raise HTTPException(status_code=404, detail="task not found")
     if task.status == "failed":
-        raise HTTPException(status_code=410, detail="task failed; no zip available")
+        raise HTTPException(status_code=410, detail="task failed; no result zip available")
     if task.status != "completed":
         raise HTTPException(status_code=404, detail="task not completed")
     zip_path = os.path.join(STATE.workdir, "outputs", f"{task_id}.zip")
     if not os.path.isfile(zip_path):
         raise HTTPException(status_code=410, detail="zip missing")
-    return FileResponse(
-        zip_path,
-        media_type="application/zip",
-        filename=f"{task_id}.zip",
-    )
+
+    if format == "md":
+        return FileResponse(
+            zip_path,
+            media_type="application/zip",
+            filename=f"{task_id}.zip",
+        )
+
+    out_path = os.path.join(STATE.workdir, "outputs", f"{task_id}.{format}")
+    if not os.path.isfile(out_path):
+        try:
+            convert_result(zip_path, format, out_path, STATE.pandoc_pdf_engine)
+        except ConversionError as e:
+            raise HTTPException(status_code=500, detail=f"conversion failed: {e}")
+
+    media, filename = _media_for_format(format, task_id)
+    return FileResponse(out_path, media_type=media, filename=filename)
 
 
 @app.delete("/api/v1/tasks/{task_id}", dependencies=[Depends(get_token)])
@@ -265,6 +305,13 @@ def delete_task(task_id: str) -> Response:
             os.remove(log_path)
         except OSError:
             pass
+    for fmt in ("docx", "html", "pdf", "latex"):
+        cached = os.path.join(STATE.workdir, "outputs", f"{task_id}.{fmt}")
+        if os.path.isfile(cached):
+            try:
+                os.remove(cached)
+            except OSError:
+                pass
     return Response(status_code=204)
 
 
@@ -295,6 +342,11 @@ def _parse_args() -> argparse.Namespace:
             "May be passed multiple times. Example: --peers http://192.168.1.100:10001,my-token"
         ),
     )
+    parser.add_argument(
+        "--pandoc-pdf-engine",
+        default="weasyprint",
+        help="pandoc PDF engine (default: weasyprint; alt: xelatex, pdflatex, wkhtmltopdf)",
+    )
     return parser.parse_args()
 
 
@@ -303,6 +355,7 @@ def main() -> None:
     STATE.workdir = os.path.abspath(args.workdir)
     STATE.model_dir = os.path.abspath(args.model_dir)
     STATE.gpu_index = args.gpu
+    STATE.pandoc_pdf_engine = args.pandoc_pdf_engine
 
     os.makedirs(os.path.join(STATE.workdir, "tmp"), exist_ok=True)
     os.makedirs(os.path.join(STATE.workdir, "outputs"), exist_ok=True)
@@ -322,6 +375,7 @@ def main() -> None:
         expose_headers=["Content-Disposition"],
     )
     print(f"[server] CORS allow_origins={origins}", flush=True)
+    print(f"[server] pandoc PDF engine: {STATE.pandoc_pdf_engine}", flush=True)
 
     # Parse peers
     if args.peers:
