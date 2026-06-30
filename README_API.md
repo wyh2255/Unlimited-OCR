@@ -254,6 +254,53 @@ HTTP:
 
 需自行安装 TeX Live（体积较大，~500MB-1GB）。
 
+## 多用户配置（小团队）
+
+支持 2-10 人小团队共用一个 OCR 服务，每个用户用自己的 token，任务按 owner 隔离。
+
+### 配置文件
+
+创建 `~/.ocr_tokens.json`：
+
+    {
+      "tokens": [
+        {"token": "alice_xxx", "owner": "alice"},
+        {"token": "bob_yyy",   "owner": "bob"}
+      ]
+    }
+
+    chmod 600 ~/.ocr_tokens.json
+
+启动 server（自动识别文件）：
+
+    python -m gateway.server --port 10001
+
+或指定路径：
+
+    python -m gateway.server --tokens-file /path/to/tokens.json
+
+文件修改后自动热加载，无需重启。
+
+### 客户端使用
+
+每位用户用自己的 token：
+
+    export OCR_API_TOKEN=alice_xxx
+    ocr-client whoami             # → owner: alice
+    ocr-client upload doc.pdf     # 任务归属 alice
+    ocr-client list --scope mine  # 只看自己的
+    ocr-client list --scope all   # 看全部
+
+### 单 token 回退
+
+未配置 tokens.json 时，使用 `OCR_API_TOKEN` 环境变量，owner="self"。
+现有部署无需任何改动。
+
+### 任务持久化
+
+任务列表存储在 `api_workdir/tasks.db`（sqlite），server 重启后自动恢复。
+重启时仍在运行的任务会标为 failed（error="server restarted"），已完成的任务可正常下载。
+
 ## 9. 常见问题
 
 **Q1. 上传后 `status` 一直是 `queued` 很久不动。**

@@ -4,6 +4,47 @@ Lightweight ADRs for this repo. Newest first; older entries kept for context.
 
 ---
 
+### ADR-010: 多 token 配置文件 + sqlite 持久化 (2026-06-30)
+
+**Context:**
+- Phase B 小团队 2-10 人多用户，需多用户标识和任务持久化
+
+**Decision:**
+- Token 配置：`~/.ocr_tokens.json` 文件（非 env，非 DB）
+- 持久化：sqlite（stdlib `sqlite3`，无新依赖）
+- 列表可见性：mine/all 两档，不做细粒度权限
+
+**Alternatives Considered:**
+- env 多 token：格式丑（`OCR_API_TOKENS="t1:alice,t2:bob"`），转义/特殊字符难处理
+- PostgreSQL/MySQL：过度设计
+- JSON 文件持久化：并发写不安全
+- 完整 RBAC：2-10 人用不上
+
+**Consequences:**
+- 新增 `gateway/users.py` + `gateway/persist.py`
+- server 启动多一步加载 + 恢复
+
+---
+
+### ADR-011: 知识库导出 hook 暂不做 (2026-06-30)
+
+**Context:**
+- 用户设定第二层目标"PDF→MD→知识库"，但 RAG vs wiki vs Obsidian 方向未定
+
+**Decision:**
+- 本次完全不实现 hook，不留接口
+
+**Alternatives Considered:**
+- 外部 shell 脚本 hook（OCR_EXPORT_HOOK）
+- Python 插件 entry point
+- 直接加 /api/v1/tasks/{id}/export-to-obsidian 端点
+
+**Consequences:**
+- Phase C 无代码改动
+- 后续方向定了再补，三种形态都能后加
+
+---
+
 ### ADR-007: weasyprint 作为默认 PDF 引擎 (2026-06-30)
 
 **Context:**

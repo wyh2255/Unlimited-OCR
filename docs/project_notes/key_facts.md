@@ -21,6 +21,10 @@ in the project changes; do not delete old facts unless they are wrong.
 - Header: `Authorization: Bearer <token>`.
 - Comparison: `secrets.compare_digest`. Constant-time.
 - `GET /api/v1/health` is the only endpoint that does **not** require auth.
+- Multi-user mode: ~/.ocr_tokens.json (or --tokens-file / $OCR_TOKENS_FILE).
+  Format: {"tokens": [{"token": "t1", "owner": "alice"}, ...]}.
+  Hot-reloaded on mtime change. Falls back to single-token OCR_API_TOKEN
+  (owner="self") when file absent.
 
 ## CORS
 
@@ -50,7 +54,8 @@ value 1–16. The detected value for a running task lives at
 ./api_workdir/
 ├── tmp/<task_id>/         # per-task scratch; removed on completion
 ├── outputs/<task_id>.zip  # final result; kept until DELETE
-└── logs/<task_id>_sglang.log   # SGLang log; kept until DELETE
+├── logs/<task_id>_sglang.log   # SGLang log; kept until DELETE
+└── tasks.db                       # sqlite task persistence (Phase B)
 ```
 
 `DELETE /api/v1/tasks/<id>` removes all three.
@@ -139,3 +144,20 @@ queued → running → (completed | failed)
 - Default port test on host: 10001 (gateway), 5173 (vite).
 - Wall time for a 7-page Benchmarking PDF at concurrency 4: ~150 s.
 - Wall time for an 8-page LEMMA PDF at concurrency 4: ~165 s.
+
+## Task Persistence (Phase B)
+
+- `api_workdir/tasks.db` (stdlib sqlite3, no new dependency).
+- TaskState saved on every status transition (queued/running/completed/failed).
+- On restart: running tasks → completed (if zip exists) or failed
+  (error="server restarted").
+- DELETE removes the sqlite row along with zip/tmp/log/cache.
+
+## Multi-User (Phase B)
+
+- UserRegistry reads ~/.ocr_tokens.json (or --tokens-file / $OCR_TOKENS_FILE).
+- Token → owner mapping. Hot-reload on mtime change.
+- Single-token fallback: OCR_API_TOKEN env, owner="self".
+- TaskState.owner field. _task_to_dict outputs it.
+- GET /api/v1/me → {"owner": "..."}. GET /api/v1/tasks?scope=mine|all.
+- 2-10 person trust model: all scope shows all tasks, no per-task ACL.

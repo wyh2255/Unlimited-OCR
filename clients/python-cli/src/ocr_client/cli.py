@@ -1,9 +1,9 @@
 """CLI for the Unlimited-OCR gateway client.
 
-Subcommands: upload, status, download, delete, health.
+Subcommands: upload, status, download, delete, health, list, whoami.
 
 Module layout:
-  - api.py: low-level HTTP helpers (build_headers, check_resp, fetch_status)
+  - api.py: low-level HTTP helpers (build_headers, check_resp, fetch_status, whoami, list_tasks)
   - progress.py: rich/ASCII presentation + watch loops
   - cli.py: this file — subcommand handlers + argparse + main()
 """
@@ -214,6 +214,60 @@ def cmd_delete(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_whoami(args: argparse.Namespace) -> int:
+    console = console_or_none()
+    server = args.server.rstrip("/")
+    data = api.whoami(server, args.token)
+    if data is None:
+        return 1
+    owner = data.get("owner", "unknown")
+    _print(console, f"owner: [bold]{owner}[/bold]")
+    return 0
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    console = console_or_none()
+    server = args.server.rstrip("/")
+    data = api.list_tasks(server, args.token, args.scope)
+    if data is None:
+        return 1
+    tasks = data.get("tasks", [])
+    count = data.get("count", len(tasks))
+    scope = data.get("scope", args.scope)
+
+    tasks = tasks[: args.limit]
+
+    if console is not None:
+        from rich.table import Table
+        table = Table(title=f"Tasks (scope={scope}, {count} total, showing {len(tasks)})")
+        table.add_column("task_id", style="cyan")
+        table.add_column("status")
+        table.add_column("owner", style="green")
+        table.add_column("pages", justify="right")
+        table.add_column("pdf_name")
+        table.add_column("created_at")
+        for t in tasks:
+            table.add_row(
+                t.get("task_id", ""),
+                t.get("status", ""),
+                t.get("owner", ""),
+                str(t.get("total_pages", 0)),
+                t.get("pdf_name", ""),
+                t.get("created_at", "")[:19],
+            )
+        console.print(table)
+    else:
+        print(f"Tasks (scope={scope}, {count} total, showing {len(tasks)}):")
+        for t in tasks:
+            print(
+                f"  {t.get('task_id','')}  {t.get('status',''):10s}  "
+                f"owner={t.get('owner','')}  pages={t.get('total_pages',0)}  "
+                f"{t.get('pdf_name','')}"
+            )
+
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     def common_auth(p: argparse.ArgumentParser) -> None:
         p.add_argument(
@@ -292,6 +346,26 @@ def build_parser() -> argparse.ArgumentParser:
     p_hc = sub.add_parser("health", help="GET /api/v1/health")
     common_auth(p_hc)
     p_hc.set_defaults(func=cmd_health)
+
+    p_ls = sub.add_parser("list", help="list tasks (default: only your own)")
+    common_auth(p_ls)
+    p_ls.add_argument(
+        "--scope",
+        choices=("mine", "all"),
+        default="mine",
+        help="scope: 'mine' (default) or 'all'",
+    )
+    p_ls.add_argument(
+        "--limit",
+        type=int,
+        default=50,
+        help="max tasks to display (default: 50)",
+    )
+    p_ls.set_defaults(func=cmd_list)
+
+    p_me = sub.add_parser("whoami", help="show the owner for the current token")
+    common_auth(p_me)
+    p_me.set_defaults(func=cmd_whoami)
 
     return parser
 

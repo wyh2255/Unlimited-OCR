@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import type { LocalTaskMeta, TaskInfo } from '@/types/api'
+import type { LocalTaskMeta, TaskInfo, TaskListResponse } from '@/types/api'
 import { ApiClientError, useApi } from '@/composables/useApi'
 import { useSettings } from '@/composables/useSettings'
 import { useTaskStore } from '@/composables/useTaskStore'
@@ -14,6 +14,7 @@ const toast = useToast()
 const selectedId = ref<string | null>(null)
 const expanded = ref<Record<string, boolean>>({})
 const deleting = ref<Record<string, boolean>>({})
+const scope = ref<'mine' | 'all'>('mine')
 
 interface Entry {
   meta: LocalTaskMeta
@@ -60,6 +61,7 @@ async function pollOne(meta: LocalTaskMeta, entry: Entry): Promise<void> {
         created_at: meta.created_local,
         started_at: null,
         finished_at: null,
+        owner: '',
       }
       taskStore.setStatus(meta.task_id, 'failed')
     } else {
@@ -146,6 +148,41 @@ function clearAll(): void {
   selectedId.value = null
 }
 
+async function refreshFromServer(): Promise<void> {
+  try {
+    const resp: TaskListResponse = await api().listTasks(scope.value)
+    for (const t of resp.tasks) {
+      const existing = taskStore.get(t.task_id)
+      if (existing) {
+        taskStore.setStatus(t.task_id, t.status)
+        const e = entries[t.task_id]
+        if (e) e.info = t
+      } else {
+        const meta: LocalTaskMeta = {
+          task_id: t.task_id,
+          file_name: '(server)',
+          file_size: 0,
+          image_mode: t.image_mode,
+          concurrency_hint: null,
+          created_local: t.created_at,
+          last_seen_status: t.status,
+          last_polled: new Date().toISOString(),
+          backend_url: settings.value.serverUrl,
+        }
+        taskStore.add(meta)
+        entries[t.task_id] = { meta, info: t, loading: false }
+      }
+    }
+    toast.success(`刷新成功，共 ${resp.count} 个任务`)
+  } catch (e) {
+    if (e instanceof ApiClientError) {
+      toast.error(`刷新失败 · ${e.status} · ${e.detail}`)
+    } else {
+      toast.error(`刷新失败 · ${String((e as Error).message ?? e)}`)
+    }
+  }
+}
+
 defineExpose({
   select,
   getSelectedId: () => selectedId.value,
@@ -180,6 +217,10 @@ watch(
     startPolling()
   },
 )
+
+watch(scope, () => {
+  void refreshFromServer()
+})
 </script>
 
 <template>
@@ -194,6 +235,18 @@ watch(
           清空列表
         </button>
       </div>
+    </div>
+
+    <div class="tasklist__controls">
+      <label class="radio">
+        <input type="radio" v-model="scope" value="mine" /> 只看我的
+      </label>
+      <label class="radio">
+        <input type="radio" v-model="scope" value="all" /> 看全部
+      </label>
+      <button class="btn btn--secondary btn--sm" @click="refreshFromServer">
+        从服务端刷新
+      </button>
     </div>
 
     <div v-if="Object.keys(entries).length === 0" class="list__empty muted">
@@ -243,6 +296,23 @@ watch(
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.tasklist__controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+}
+.radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--color-text-muted);
+}
+.radio input {
+  cursor: pointer;
 }
 .list__empty {
   text-align: center;

@@ -4,9 +4,11 @@
 文档概述: Unlimited-OCR 局域网服务的客户端-服务端接口规范，作为 gateway/server.py、clients/python-cli/、文档等多个 subagent 的协同基准
 ---
 
-# API 协议契约 v1.2
+# API 协议契约 v1.3
 
 > 所有实现者必须严格遵守本文档。冲突时以本文档为准。
+
+> v1.3 (2026-06-30): 多用户支持 (tokens.json 配置)、任务持久化 (sqlite)、新增 /me 与 /tasks 列表端点、TaskState 加 owner 字段。
 
 > v1.2 (2026-06-30): 新增 download ?format= 参数，支持 docx/html/pdf/latex 转换下载。默认 md 行为不变。
 
@@ -23,9 +25,30 @@
 
 ## 2. 鉴权
 
-- 启动时从环境变量 `OCR_API_TOKEN` 读取；未设置则生成 `secrets.token_urlsafe(24)` 并打印到 stdout 一次
-- 请求头：`Authorization: Bearer <token>`
-- 缺失或错误：返回 `401 {"detail": "invalid token"}`
+支持两种模式：
+
+### 2.1 单 token 模式（向后兼容）
+
+环境变量 `OCR_API_TOKEN`。owner 固定为 `"self"`。
+
+### 2.2 多 token 模式
+
+配置文件 `~/.ocr_tokens.json`（或 `--tokens-file` 指定路径）：
+
+    {
+      "tokens": [
+        {"token": "t1xxx", "owner": "alice"},
+        {"token": "t2xxx", "owner": "bob"}
+      ]
+    }
+
+- 文件不存在时自动回退到单 token 模式
+- 文件 mtime 变化时自动热加载，无需重启
+- owner 用于任务归属和列表过滤
+- 文件权限建议 `chmod 600`
+
+请求头：`Authorization: Bearer <token>`
+缺失或错误：返回 `401 {"detail": "invalid token"}`
 
 ## 3. 任务状态机
 
@@ -43,6 +66,8 @@ queued → running → (completed | failed)
 | `image_mode` | string | `gundam` / `base` |
 | `concurrency` | int | 实际使用的并发数 |
 | `error` | string\|null | 失败时填写 |
+| `owner` | string | 任务所属用户名（单 token 模式为 "self"）|
+| `pdf_name` | string | 上传时的 PDF 文件名 |
 | `created_at` | ISO 8601 string | |
 | `started_at` | ISO 8601 string\|null | |
 | `finished_at` | ISO 8601 string\|null | |
@@ -190,6 +215,38 @@ queued → running → (completed | failed)
 
 清理 zip + 取消（若 queued）。Response 204。
 
+### 4.6 `GET /api/v1/tasks?scope=mine|all`（鉴权）
+
+返回任务列表。
+
+**Query 参数**：
+- `scope`：可选，默认 `mine`。`mine` 只返回当前 owner 的任务，`all` 返回全部
+
+**Response 200**：
+
+    {
+      "tasks": [ <task状态对象>, ... ],
+      "count": 12,
+      "scope": "mine"
+    }
+
+按 `created_at` 倒序排列。每个 task 对象结构同 §3。
+
+**错误**：
+- `400` scope 不在值域内
+- `401` 鉴权失败
+
+### 4.7 `GET /api/v1/me`（鉴权）
+
+返回当前 token 对应的用户信息。
+
+**Response 200**：
+
+    { "owner": "alice" }
+
+**错误**：
+- `401` 鉴权失败
+
 ## 5. 错误响应统一格式
 
 ```json
@@ -217,7 +274,8 @@ Unlimited-OCR/
 ./api_workdir/
 ├── tmp/<task_id>/         # 中间产物（任务完成后清理）
 ├── outputs/<task_id>.zip  # 最终结果（保留到被 DELETE 或过期）
-└── outputs/<task_id>.{docx,html,pdf,tex}  # 转换缓存（Phase A）
+├── outputs/<task_id>.{docx,html,pdf,tex}  # 转换缓存（Phase A）
+└── tasks.db                       # sqlite 任务持久化（Phase B）
 ```
 
 ## 7. GPU 内存检测 + 三档降级
@@ -360,3 +418,14 @@ export OCR_CONCURRENCY_TIERS="16:4,6:2,0:1"
 # A100 默认（40GB）— 不设置环境变量即用内置默认值
 # 内置默认: ≥30GB→8, ≥10GB→4, 否则→2
 ```
+
+## 13. 任务持久化 (SQLite)
+
+任务元数据存储在 `api_workdir/tasks.db`（stdlib `sqlite3`，无额外依赖）。
+
+- 每次状态变更（queued/running/completed/failed）自动写入
+- server 重启时从 sqlite 恢复任务列表
+- 重启时仍为 `running` 的任务：
+  - 若 `outputs/{id}.zip` 存在 → 标为 `completed`
+  - 否则 → 标为 `failed`（error="server restarted"）
+- `DELETE /api/v1/tasks/{id}` 同步删除 sqlite 行

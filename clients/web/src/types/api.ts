@@ -53,6 +53,17 @@ export interface TaskInfo {
   created_at: string
   started_at: string | null
   finished_at: string | null
+  owner: string
+}
+
+export interface TaskListResponse {
+  tasks: TaskInfo[]
+  count: number
+  scope: 'mine' | 'all'
+}
+
+export interface MeResponse {
+  owner: string
 }
 
 export interface ApiError {

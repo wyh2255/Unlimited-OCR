@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
+import type { MeResponse } from '@/types/api'
+import { useApi } from '@/composables/useApi'
 import HealthBadge from './HealthBadge.vue'
 import { useSettings } from '@/composables/useSettings'
 
@@ -9,6 +11,7 @@ const editing = ref(false)
 const draftUrl = ref(settings.value.serverUrl)
 const draftToken = ref(settings.value.token)
 const draftFallback = ref(settings.value.fallbackUrl)
+const currentUser = ref<string>('')
 
 watch(
   () => [settings.value.serverUrl, settings.value.token, settings.value.fallbackUrl],
@@ -17,6 +20,28 @@ watch(
     draftToken.value = String(t)
     draftFallback.value = String(f)
   },
+)
+
+async function fetchCurrentUser(): Promise<void> {
+  if (!settings.value.token) {
+    currentUser.value = ''
+    return
+  }
+  try {
+    const api = useApi(settings.value.serverUrl, settings.value.token)
+    const data: MeResponse = await api.whoami()
+    currentUser.value = data.owner
+  } catch {
+    currentUser.value = ''
+  }
+}
+
+watch(
+  () => [settings.value.serverUrl, settings.value.token],
+  () => {
+    void fetchCurrentUser()
+  },
+  { immediate: true },
 )
 
 function open() {
@@ -59,6 +84,9 @@ function cancel() {
         <span class="badge badge--muted">
           {{ settings.token ? 'token 已设置' : '未设 token' }}
         </span>
+        <div class="settings__user" v-if="currentUser" @click.stop>
+          <span class="muted">用户:</span> <strong>{{ currentUser }}</strong>
+        </div>
         <button class="btn btn--ghost btn--sm">编辑</button>
       </div>
 
@@ -177,6 +205,19 @@ function cancel() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.settings__user {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+.settings__user strong {
+  font-weight: 600;
 }
 .topbar__form {
   display: flex;

@@ -45,3 +45,24 @@ def fetch_status(server: str, token: str | None, task_id: str) -> dict[str, Any]
     except requests.RequestException as e:
         return {"__error__": str(e)}
     return check_resp(resp)
+
+
+def whoami(server: str, token: str | None) -> dict[str, Any] | None:
+    """GET /api/v1/me — returns {'owner': '...'}."""
+    r = requests.get(
+        f"{server}/api/v1/me",
+        headers=build_headers(token),
+        timeout=10.0,
+    )
+    return check_resp(r)
+
+
+def list_tasks(server: str, token: str | None, scope: str = "mine") -> dict[str, Any] | None:
+    """GET /api/v1/tasks?scope=mine|all — returns {'tasks': [...], 'count': N, 'scope': '...'}."""
+    r = requests.get(
+        f"{server}/api/v1/tasks",
+        params={"scope": scope},
+        headers=build_headers(token),
+        timeout=10.0,
+    )
+    return check_resp(r)

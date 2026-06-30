@@ -1,7 +1,9 @@
 import type {
   DownloadFormat,
   HealthResponse,
+  MeResponse,
   TaskInfo,
+  TaskListResponse,
   UploadOptions,
   UploadResponse,
 } from '@/types/api'
@@ -137,6 +139,22 @@ export class ApiClient {
       headers: this.buildHeaders({ Accept: 'application/json' }),
     })
     return this.check<TaskInfo>(resp)
+  }
+
+  async whoami(): Promise<MeResponse> {
+    const resp = await fetch(`${this.baseUrl}/api/v1/me`, {
+      method: 'GET',
+      headers: this.buildHeaders({ Accept: 'application/json' }),
+    })
+    return this.check<MeResponse>(resp)
+  }
+
+  async listTasks(scope: 'mine' | 'all' = 'mine'): Promise<TaskListResponse> {
+    const resp = await fetch(`${this.baseUrl}/api/v1/tasks?scope=${scope}`, {
+      method: 'GET',
+      headers: this.buildHeaders({ Accept: 'application/json' }),
+    })
+    return this.check<TaskListResponse>(resp)
   }
 
   async deleteTask(taskId: string): Promise<void> {

@@ -88,6 +88,7 @@ async function copyId(): Promise<void> {
     <div class="task__head">
       <div class="task__id">
         <span class="mono" :title="meta.task_id">{{ shortId(meta.task_id) }}</span>
+        <span v-if="info?.owner" class="badge badge--owner">{{ info.owner }}</span>
         <button
           class="btn btn--ghost btn--sm copy-btn"
           @click.stop="copyId"
@@ -206,6 +207,13 @@ async function copyId(): Promise<void> {
   font-size: 10px;
   padding: 2px 8px;
   color: var(--color-text-muted);
+}
+.badge--owner {
+  background: var(--color-card);
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+  font-size: 10px;
+  padding: 1px 6px;
 }
 .task__file {
   font-size: 12px;

@@ -56,6 +56,7 @@ def _task_to_dict(task: TaskState) -> dict:
         "concurrency": task.concurrency,
         "error": task.error,
         "owner": task.owner,
+        "pdf_name": task.pdf_name,
         "created_at": task.created_at,
         "started_at": task.started_at,
         "finished_at": task.finished_at,
