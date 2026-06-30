@@ -1,12 +1,14 @@
 ---
-日期: 2026-06-27
+日期: 2026-06-30
 文档类型: API 协议契约
 文档概述: Unlimited-OCR 局域网服务的客户端-服务端接口规范，作为 gateway/server.py、clients/python-cli/、文档等多个 subagent 的协同基准
 ---
 
-# API 协议契约 v1.1
+# API 协议契约 v1.2
 
 > 所有实现者必须严格遵守本文档。冲突时以本文档为准。
+
+> v1.2 (2026-06-30): 新增 download ?format= 参数，支持 docx/html/pdf/latex 转换下载。默认 md 行为不变。
 
 ## 1. 网络与端口
 
@@ -148,26 +150,41 @@ queued → running → (completed | failed)
 - `404` task_id 不存在
 - `401` 鉴权失败
 
-### 4.4 `GET /api/v1/tasks/{task_id}/download`（鉴权）
+### 4.4 `GET /api/v1/tasks/{task_id}/download?format={md|docx|html|pdf|latex}`（鉴权）
 
-**Response 200**:
-- `Content-Type: application/zip`
-- `Content-Disposition: attachment; filename="<task_id>.zip"`
-- body 为 ZIP 流
+**Query 参数**：
+- `format`：可选，默认 `md`。值域 `md / docx / html / pdf / latex`
 
-**ZIP 内部结构**：
-```
-<task_id>.zip
-├── result.md
-└── images/
-    ├── page_0001_0.jpg
-    ├── page_0001_1.jpg
-    └── ...
-```
+**Response 200**（format=md，默认行为，向后兼容）：
+- Content-Type: `application/zip`
+- Content-Disposition: `attachment; filename="<task_id>.zip"`
+- body: ZIP 字节流，内部结构：
+  ```
+  <task_id>.zip
+  ├── result.md
+  └── images/
+      ├── page_0002_0.jpg
+      └── ...
+  ```
+
+**Response 200**（format=docx|html|pdf|latex）：
+- 服务端调用 pandoc 把 `result.md` + `images/` 转换为目标格式
+- 转换结果缓存在 `api_workdir/outputs/<task_id>.<ext>`，相同格式第二次请求直接命中缓存
+- `DELETE /api/v1/tasks/{id}` 时一并清除所有格式缓存
+
+| format | Content-Type | 扩展名 |
+|--------|--------------|--------|
+| md | application/zip | .zip |
+| docx | application/vnd.openxmlformats-officedocument.wordprocessingml.document | .docx |
+| html | text/html | .html |
+| pdf | application/pdf | .pdf |
+| latex | application/x-latex | .tex |
 
 **错误**：
+- `400` format 不在值域内
 - `404` task 不存在 / 未完成
 - `410` task 已 failed，zip 不存在
+- `500` pandoc 转换失败（错误细节在 detail 字段）
 
 ### 4.5 `DELETE /api/v1/tasks/{task_id}`（鉴权）
 
@@ -199,7 +216,8 @@ Unlimited-OCR/
 ```
 ./api_workdir/
 ├── tmp/<task_id>/         # 中间产物（任务完成后清理）
-└── outputs/<task_id>.zip  # 最终结果（保留到被 DELETE 或过期）
+├── outputs/<task_id>.zip  # 最终结果（保留到被 DELETE 或过期）
+└── outputs/<task_id>.{docx,html,pdf,tex}  # 转换缓存（Phase A）
 ```
 
 ## 7. GPU 内存检测 + 三档降级

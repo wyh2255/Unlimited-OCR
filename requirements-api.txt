@@ -3,3 +3,4 @@ uvicorn[standard]>=0.27
 python-multipart>=0.0.9
 rich>=13.7
 requests>=2.31
+weasyprint>=60

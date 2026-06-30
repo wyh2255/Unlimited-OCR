@@ -212,7 +212,49 @@ curl -X DELETE -H "Authorization: Bearer $TOKEN" \
 | `./api_workdir/tmp/<task_id>/` | 渲染好的 PDF 图片、并发请求中间产物 | 任务完成后清理 |
 | `./api_workdir/outputs/<task_id>.zip` | 最终结果包(含 `result.md` 和 `images/`) | 保留到 `DELETE` 或过期 |
 
-## 8. 常见问题
+## 8. 文档转换输出
+
+服务端集成 pandoc，支持把 OCR 结果转换为 5 种格式下载，用户无需本地安装工具。
+
+| 格式 | 说明 | 服务端依赖 |
+|------|------|-----------|
+| md | 原始 ZIP（result.md + images/），默认 | 无 |
+| docx | Word 文档 | pandoc |
+| html | 单文件 HTML，图片内嵌 base64 | pandoc |
+| pdf | PDF 文档 | pandoc + weasyprint |
+| latex | LaTeX 源码（含 \documentclass） | pandoc |
+
+### 安装服务端依赖
+
+    sudo apt install pandoc libpango-1.0-0 libpangoft2-1.0-0 fonts-noto-cjk
+    uv pip install weasyprint
+
+### 使用
+
+CLI:
+
+    ocr-client download <task_id> --format docx --out ./out
+    ocr-client download <task_id> --format pdf  --out ./out
+    ocr-client download <task_id>              # 默认 md，向后兼容
+
+HTTP:
+
+    curl -H "Authorization: Bearer $OCR_API_TOKEN" \
+        "http://127.0.0.1:10001/api/v1/tasks/<id>/download?format=pdf" -o out.pdf
+
+浏览器：在结果预览页点"下载 ▾"选择格式。
+
+转换结果在服务端缓存，相同格式第二次请求秒回。删除任务时一并清除所有格式缓存。
+
+### PDF 引擎切换
+
+默认 weasyprint（HTML 路线，CJK 友好）。如需 xelatex（学术排版更精细）：
+
+    python -m gateway.server --pandoc-pdf-engine xelatex
+
+需自行安装 TeX Live（体积较大，~500MB-1GB）。
+
+## 9. 常见问题
 
 **Q1. 上传后 `status` 一直是 `queued` 很久不动。**
 SGLang 冷启动通常要 30~60 秒加载模型权重。等一两分钟再看 `status` 应当跳到 `running`。
@@ -232,7 +274,7 @@ SGLang 冷启动通常要 30~60 秒加载模型权重。等一两分钟再看 `s
 **Q6. `download` 报 `410`。**
 任务 `failed`,zip 已被清理,看 `status.error` 字段定位原因。
 
-## 9. 安全提示
+## 10. 安全提示
 
 - 整个服务走**明文 HTTP + Bearer token**,**只适合局域网**。
 - 不要把 `:10001` 暴露到公网;不要把 `OCR_API_TOKEN` 提交进 git、贴到群聊。

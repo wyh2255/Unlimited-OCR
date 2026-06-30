@@ -1,4 +1,5 @@
 import type {
+  DownloadFormat,
   HealthResponse,
   TaskInfo,
   UploadOptions,
@@ -193,6 +194,20 @@ export class ApiClient {
     )
     if (!resp.ok) throw await this.parseError(resp)
     return resp.blob()
+  }
+
+  async downloadAs(taskId: string, fmt: DownloadFormat): Promise<void> {
+    const resp = await fetch(
+      `${this.baseUrl}/api/v1/tasks/${taskId}/download?format=${fmt}`,
+      { method: 'GET', headers: this.buildHeaders() },
+    )
+    if (!resp.ok) throw await this.parseError(resp)
+    const blob = await resp.blob()
+    const cd = resp.headers.get('Content-Disposition') ?? ''
+    const match = cd.match(/filename="([^"]+)"/)
+    const ext = fmt === 'md' ? 'zip' : fmt === 'latex' ? 'tex' : fmt
+    const fileName = match?.[1] ?? `${taskId}.${ext}`
+    triggerDownload(blob, fileName)
   }
 }
 

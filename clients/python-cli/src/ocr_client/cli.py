@@ -95,17 +95,15 @@ def cmd_upload(args: argparse.Namespace) -> int:
 
     rc = watch_task(console, server, args.token, task_id)
     if rc == 0 and args.out:
-        rc = _download_and_extract(console, server, args.token, task_id, args.out)
+        rc = _download_and_extract(console, server, args.token, task_id, args.out, "md")
     return rc
 
 
 def _download_and_extract(
-    console, server: str, token: str | None, task_id: str, out_dir: str
+    console, server: str, token: str | None, task_id: str, out_dir: str, fmt: str = "md"
 ) -> int:
     out_root = Path(out_dir)
     out_root.mkdir(parents=True, exist_ok=True)
-    zip_path = out_root / f"{task_id}.zip"
-    extract_dir = out_root / task_id
 
     status, data = ensure_status_terminal(console, server, token, task_id)
     if status != "completed":
@@ -113,7 +111,13 @@ def _download_and_extract(
         _err(console, f"download aborted: {detail}")
         return 1
 
-    url = f"{server}/api/v1/tasks/{task_id}/download"
+    if fmt == "md":
+        target_path = out_root / f"{task_id}.zip"
+    else:
+        ext = "tex" if fmt == "latex" else fmt
+        target_path = out_root / f"{task_id}.{ext}"
+
+    url = f"{server}/api/v1/tasks/{task_id}/download?format={fmt}"
     try:
         with requests.get(
             url,
@@ -128,7 +132,7 @@ def _download_and_extract(
                     _err(console, f"download HTTP {resp.status_code}")
                 return 1
             total = int(resp.headers.get("Content-Length") or 0)
-            with zip_path.open("wb") as fh:
+            with target_path.open("wb") as fh:
                 if console is not None and total > 0:
                     from rich.progress import BarColumn, Progress, TextColumn
                     with Progress(
@@ -150,16 +154,19 @@ def _download_and_extract(
         _err(console, f"download error: {e}")
         return 2
 
-    extract_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        with zipfile.ZipFile(zip_path) as zf:
-            zf.extractall(extract_dir)
-    except zipfile.BadZipFile as e:
-        _err(console, f"invalid zip: {e}")
-        return 1
-
-    _print(console, f"[bold green]saved[/bold green] {zip_path}")
-    _print(console, f"[bold green]extracted[/bold green] {extract_dir}")
+    if fmt == "md":
+        extract_dir = out_root / task_id
+        extract_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            with zipfile.ZipFile(target_path) as zf:
+                zf.extractall(extract_dir)
+        except zipfile.BadZipFile as e:
+            _err(console, f"invalid zip: {e}")
+            return 1
+        _print(console, f"[bold green]saved[/bold green] {target_path}")
+        _print(console, f"[bold green]extracted[/bold green] {extract_dir}")
+    else:
+        _print(console, f"[bold green]saved[/bold green] {target_path}")
     return 0
 
 
@@ -185,7 +192,7 @@ def cmd_status(args: argparse.Namespace) -> int:
 def cmd_download(args: argparse.Namespace) -> int:
     console = console_or_none()
     server = args.server.rstrip("/")
-    return _download_and_extract(console, server, args.token, args.task_id, args.out)
+    return _download_and_extract(console, server, args.token, args.task_id, args.out, args.format)
 
 
 def cmd_delete(args: argparse.Namespace) -> int:
@@ -269,6 +276,12 @@ def build_parser() -> argparse.ArgumentParser:
     common_auth(p_dl)
     p_dl.add_argument("task_id", help="12-char hex task id")
     p_dl.add_argument("--out", default="./out", help="output directory (default: ./out)")
+    p_dl.add_argument(
+        "--format",
+        choices=("md", "docx", "html", "pdf", "latex"),
+        default="md",
+        help="output format (default: md = original ZIP with result.md + images/)",
+    )
     p_dl.set_defaults(func=cmd_download)
 
     p_de = sub.add_parser("delete", help="delete a task and its result")

@@ -4,6 +4,8 @@ export type TaskStatus = 'queued' | 'running' | 'completed' | 'failed'
 
 export type ImageMode = 'gundam' | 'base'
 
+export type DownloadFormat = 'md' | 'docx' | 'html' | 'pdf' | 'latex'
+
 export interface GpuInfo {
   name: string
   total_mb: number

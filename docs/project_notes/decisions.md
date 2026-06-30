@@ -4,6 +4,58 @@ Lightweight ADRs for this repo. Newest first; older entries kept for context.
 
 ---
 
+### ADR-007: weasyprint 作为默认 PDF 引擎 (2026-06-30)
+
+**Context:**
+- Phase A 文档转换需要 PDF 引擎。候选 weasyprint / xelatex / pdflatex
+
+**Decision:**
+- 默认 weasyprint，可通过 `--pandoc-pdf-engine` 切换
+- 理由：pip 安装 ~100MB（vs TeX Live 500MB-1GB）；HTML→PDF 路线 CJK 友好；pandoc 原生支持
+
+**Alternatives Considered:**
+- xelatex（学术精细但太重）
+- pdflatex（不支持 CJK，排除）
+
+**Consequences:**
+- Dockerfile 需装 libpango；用户要 xelatex 自装 TeX Live
+
+---
+
+### ADR-008: 转换在服务端完成 (2026-06-30)
+
+**Context:**
+- pandoc 转换可在服务端或客户端做
+
+**Decision:**
+- 服务端转换
+- 理由：服务化意义所在；用户无需本地装 pandoc/weasyprint；转换结果可缓存复用
+
+**Alternatives Considered:**
+- 客户端转换（用户都得装 pandoc，违背服务化）
+
+**Consequences:**
+- 服务端需装 pandoc + weasyprint；Dockerfile 体积 +~380MB
+
+---
+
+### ADR-009: 默认格式 md 保持向后兼容 (2026-06-30)
+
+**Context:**
+- 下载端点加 ?format= 参数
+
+**Decision:**
+- 默认 md，返回原 ZIP
+- 理由：现有 CLI/前端不传 ?format= 也能正常工作，零破坏
+
+**Alternatives Considered:**
+- 默认改成新格式（破坏所有现有客户端）
+
+**Consequences:**
+- 客户端需主动传 ?format= 才能拿转换后格式
+
+---
+
 ### ADR-006: Peer Dispatch 对等调度架构 (2026-06-27)
 
 **Context:**

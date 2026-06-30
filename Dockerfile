@@ -2,6 +2,7 @@ FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
     python3.12 python3.12-venv python3-pip git ninja-build libgl1-mesa-glx \
+    pandoc libpango-1.0-0 libpangoft2-1.0-0 fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

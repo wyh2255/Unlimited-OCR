@@ -12,7 +12,7 @@ import css from 'highlight.js/lib/languages/css'
 import 'highlight.js/styles/github.css'
 import { unzipSync, strFromU8 } from 'fflate'
 
-import type { TaskInfo } from '@/types/api'
+import type { DownloadFormat, TaskInfo } from '@/types/api'
 import { ApiClientError, useApi } from '@/composables/useApi'
 import { useSettings } from '@/composables/useSettings'
 import { useToast } from '@/composables/useToast'
@@ -38,6 +38,7 @@ const toast = useToast()
 const api = computed(() => useApi(settings.value.serverUrl, settings.value.token))
 
 const tab = ref<'markdown' | 'images' | 'raw'>('markdown')
+const downloadMenuOpen = ref(false)
 const loading = ref(false)
 const loadingText = ref('')
 
@@ -141,6 +142,26 @@ function downloadRaw(): void {
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
+async function downloadAs(fmt: DownloadFormat): Promise<void> {
+  downloadMenuOpen.value = false
+  if (!props.task) return
+  if (fmt === 'md') {
+    downloadRaw()
+    toast.success(`已下载 ${fmt}`)
+    return
+  }
+  try {
+    await api.value.downloadAs(props.task.task_id, fmt)
+    toast.success(`已下载 ${fmt}`)
+  } catch (e) {
+    if (e instanceof ApiClientError) {
+      toast.error(`下载失败 · ${e.status} · ${e.detail}`)
+    } else {
+      toast.error(`下载失败 · ${(e as Error).message}`)
+    }
+  }
+}
+
 function imageUrl(name: string): string {
   const idx = imageFiles.value.indexOf(name)
   return idx >= 0 ? imageObjectUrls.value[idx] : ''
@@ -182,9 +203,18 @@ function imageUrl(name: string): string {
             原文
           </button>
           <div class="viewer__spacer" />
-          <button class="btn btn--secondary btn--sm" @click="downloadRaw">
-            下载 ZIP
-          </button>
+          <div class="download-menu">
+            <button class="btn btn--secondary btn--sm" @click="downloadMenuOpen = !downloadMenuOpen">
+              下载 ▾
+            </button>
+            <div v-if="downloadMenuOpen" class="download-menu__items">
+              <button class="download-menu__item" @click="downloadAs('md')">ZIP (Markdown)</button>
+              <button class="download-menu__item" @click="downloadAs('docx')">Word (.docx)</button>
+              <button class="download-menu__item" @click="downloadAs('pdf')">PDF</button>
+              <button class="download-menu__item" @click="downloadAs('html')">HTML (单文件)</button>
+              <button class="download-menu__item" @click="downloadAs('latex')">LaTeX (.tex)</button>
+            </div>
+          </div>
         </div>
 
         <div v-if="loading" class="viewer__loading">
@@ -255,6 +285,38 @@ function imageUrl(name: string): string {
   border-bottom-color: var(--color-accent);
 }
 .viewer__spacer { flex: 1; }
+.download-menu {
+  position: relative;
+}
+.download-menu__items {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  margin-top: 4px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  z-index: 10;
+  min-width: 160px;
+  padding: 4px;
+}
+.download-menu__item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--color-text);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.download-menu__item:hover {
+  background: var(--color-card);
+  color: var(--color-accent);
+}
 .viewer__loading {
   padding: 40px 20px;
   text-align: center;
