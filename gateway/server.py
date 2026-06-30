@@ -124,8 +124,30 @@ def health() -> dict:
     }
 
 
+@app.get("/api/v1/me", dependencies=[Depends(get_token)])
+def me(owner: str = Depends(get_token)) -> dict:
+    return {"owner": owner}
+
+
+@app.get("/api/v1/tasks", dependencies=[Depends(get_token)])
+def list_tasks(owner: str = Depends(get_token), scope: str = "mine") -> dict:
+    if scope not in ("mine", "all"):
+        raise HTTPException(status_code=400, detail="scope must be 'mine' or 'all'")
+    with STATE.lock:
+        items = list(STATE.tasks.values())
+    if scope == "mine":
+        items = [t for t in items if t.owner == owner]
+    items.sort(key=lambda t: t.created_at, reverse=True)
+    return {
+        "tasks": [_task_to_dict(t) for t in items],
+        "count": len(items),
+        "scope": scope,
+    }
+
+
 @app.post("/api/v1/tasks", status_code=202, dependencies=[Depends(get_token)])
 async def create_task(
+    owner: str = Depends(get_token),
     file: UploadFile = File(...),
     image_mode: str = Form("base"),
     concurrency_hint: Optional[int] = Form(None),
@@ -173,7 +195,6 @@ async def create_task(
                 detail = resp.reason or "unknown peer error"
             raise HTTPException(status_code=502, detail=f"peer forward failed ({resp.status_code}): {detail}")
 
-    # Existing local processing (unchanged)
     task_id = uuid.uuid4().hex[:12]
     work_subdir = os.path.join(STATE.workdir, "tmp", task_id)
     os.makedirs(work_subdir, exist_ok=True)
@@ -187,9 +208,13 @@ async def create_task(
         concurrency=int(concurrency_hint) if concurrency_hint else 0,
         pdf_path=pdf_path,
         work_subdir=work_subdir,
+        owner=owner,
+        pdf_name=file.filename or f"{task_id}.pdf",
     )
     with STATE.lock:
         STATE.tasks[task_id] = task
+    if STATE.persist is not None:
+        STATE.persist.save_task(task)
     STATE.queue.put(task_id)
 
     return {
@@ -312,6 +337,8 @@ def delete_task(task_id: str) -> Response:
                 os.remove(cached)
             except OSError:
                 pass
+    if STATE.persist is not None:
+        STATE.persist.delete_task(task_id)
     return Response(status_code=204)
 
 
@@ -346,6 +373,15 @@ def _parse_args() -> argparse.Namespace:
         "--pandoc-pdf-engine",
         default="weasyprint",
         help="pandoc PDF engine (default: weasyprint; alt: xelatex, pdflatex, wkhtmltopdf)",
+    )
+    parser.add_argument(
+        "--tokens-file",
+        default=os.environ.get("OCR_TOKENS_FILE"),
+        help=(
+            "path to multi-user tokens JSON (default: $OCR_TOKENS_FILE or "
+            "~/.ocr_tokens.json). Falls back to single-token OCR_API_TOKEN "
+            "mode when the file is absent."
+        ),
     )
     return parser.parse_args()
 
@@ -392,6 +428,35 @@ def main() -> None:
         token = secrets.token_urlsafe(24)
         print(f"[server] OCR_API_TOKEN not set; generated token: {token}", flush=True)
     STATE.token = token
+
+    # User registry (multi-token file or single-token fallback)
+    STATE.users.configure(args.tokens_file, token if token else None)
+    if STATE.users.is_multi_user_mode():
+        print("[server] multi-user mode: tokens file loaded", flush=True)
+    else:
+        print("[server] single-token mode (owner='self')", flush=True)
+
+    # SQLite persistence: load tasks from disk, mark orphan running as failed
+    from .persist import Persistence
+    STATE.persist = Persistence(os.path.join(STATE.workdir, "tasks.db"))
+    recovered = STATE.persist.load_all()
+    recovered_count = 0
+    for task in recovered:
+        if task.status == "running":
+            zip_path = os.path.join(STATE.workdir, "outputs", f"{task.task_id}.zip")
+            if os.path.isfile(zip_path):
+                task.status = "completed"
+                task.progress = 1.0
+                task.finished_at = _now_iso()
+            else:
+                task.status = "failed"
+                task.error = "server restarted"
+                task.finished_at = _now_iso()
+            STATE.persist.save_task(task)
+        STATE.tasks[task.task_id] = task
+        recovered_count += 1
+    if recovered_count:
+        print(f"[server] recovered {recovered_count} tasks from sqlite", flush=True)
 
     worker = threading.Thread(target=_worker_loop, daemon=True)
     worker.start()

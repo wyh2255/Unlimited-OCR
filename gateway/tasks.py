@@ -26,10 +26,17 @@ from .progress import _poll_progress, _zip_directory
 from .state import STATE, TaskState, _now_iso
 
 
+def _persist(task: TaskState) -> None:
+    """Save task state to sqlite if persistence is configured."""
+    if STATE.persist is not None:
+        STATE.persist.save_task(task)
+
+
 def _process_task(task: TaskState) -> None:
     with STATE.lock:
         task.status = "running"
         task.started_at = _now_iso()
+    _persist(task)
 
     try:
         doc = fitz.open(task.pdf_path)
@@ -40,12 +47,14 @@ def _process_task(task: TaskState) -> None:
             task.status = "failed"
             task.error = f"failed to read PDF: {e}"
             task.finished_at = _now_iso()
+        _persist(task)
         return
 
     with STATE.lock:
         task.total_pages = total_pages
         if task.concurrency == 0:
             task.concurrency = detect_concurrency(STATE.gpu_index)
+    _persist(task)
 
     sglang_dir = os.path.join(task.work_subdir, "sglang")
     cleaned_dir = os.path.join(task.work_subdir, "cleaned")
@@ -108,6 +117,7 @@ def _process_task(task: TaskState) -> None:
             task.status = "completed"
             task.progress = 1.0
             task.finished_at = _now_iso()
+        _persist(task)
     except Exception as e:
         stop_event.set()
         poller.join(timeout=2)
@@ -115,6 +125,7 @@ def _process_task(task: TaskState) -> None:
             task.status = "failed"
             task.error = str(e)
             task.finished_at = _now_iso()
+        _persist(task)
         shutil.rmtree(task.work_subdir, ignore_errors=True)
 
 
@@ -134,5 +145,6 @@ def _worker_loop() -> None:
                     t.status = "failed"
                     t.error = f"worker error: {e}"
                     t.finished_at = _now_iso()
+                    _persist(t)
         finally:
             STATE.queue.task_done()

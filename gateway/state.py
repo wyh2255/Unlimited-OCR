@@ -12,9 +12,13 @@ import queue
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from .peers import PeerConfig
+from .users import UserRegistry
+
+if TYPE_CHECKING:
+    from .persist import Persistence
 
 
 def _now_iso() -> str:
@@ -31,6 +35,8 @@ class TaskState:
     image_mode: str = "base"
     concurrency: int = 0
     error: Optional[str] = None
+    owner: str = ""
+    pdf_name: str = ""
     created_at: str = field(default_factory=_now_iso)
     started_at: Optional[str] = None
     finished_at: Optional[str] = None
@@ -49,6 +55,7 @@ def _task_to_dict(task: TaskState) -> dict:
         "image_mode": task.image_mode,
         "concurrency": task.concurrency,
         "error": task.error,
+        "owner": task.owner,
         "created_at": task.created_at,
         "started_at": task.started_at,
         "finished_at": task.finished_at,
@@ -71,6 +78,8 @@ class _State:
         self.peers: list[PeerConfig] = []
         self.proxied: dict[str, str] = {}
         self.pandoc_pdf_engine: str = "weasyprint"
+        self.users: UserRegistry = UserRegistry()
+        self.persist: Optional[Persistence] = None
 
 
 STATE = _State()
