@@ -8,6 +8,7 @@ import secrets
 import shutil
 import threading
 import uuid
+from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Response, UploadFile
@@ -297,6 +298,26 @@ def download_task(task_id: str, format: str = "md"):
 
     media, filename = _media_for_format(format, task_id)
     return FileResponse(out_path, media_type=media, filename=filename)
+
+
+@app.get("/api/v1/client/ocr-client.whl")
+def download_client():
+    """Serve the ocr-client wheel for remote `pip install` / `uv tool install`.
+
+    Usage on a remote machine:
+        pip install http://server:10001/api/v1/client/ocr-client.whl
+        # or
+        uv tool install http://server:10001/api/v1/client/ocr-client.whl
+    """
+    wheels = sorted(Path("ocr-client/dist").glob("ocr_client-*.whl"))
+    if not wheels:
+        raise HTTPException(
+            404,
+            "No client wheel found. Run `bash scripts/build_ocr_client.sh` "
+            "on the server first.",
+        )
+    return FileResponse(str(wheels[-1]), media_type="application/octet-stream",
+                        filename=wheels[-1].name)
 
 
 @app.delete("/api/v1/tasks/{task_id}", dependencies=[Depends(get_token)])
