@@ -3,6 +3,31 @@
 Date-ordered log of completed work. Newest first. Each entry should be 1–3
 lines plus links / notes.
 
+## 2026-07-01
+
+### Phase A+B 合并到 A100-server + 项目状态总结
+
+- **Status**: 完成
+- **操作**:
+  - 从 `feature/doc-conversion-and-multiuser` cherry-pick 4 个功能提交到 `A100-server`
+  - 无冲突，已推送远程
+- **当前里程碑**:
+
+| 阶段 | 状态 |
+|------|------|
+| Phase 1-5（代码重组） | ✅ |
+| 基线（SGLang + FastAPI） | ✅ |
+| Web 前端（Vue 3） | ✅ |
+| Peer Dispatch（双 GPU） | ✅ |
+| Phase A（文档转换） | ✅ |
+| Phase B（多用户 + 持久化） | ✅ |
+| Phase C（知识库导出） | ⏸ 已搁置 |
+| CI/CD | ❌ |
+| main 合并 | ❌ |
+
+- **CLI 分发方案确定**: GitHub 直装 (`pip install git+https://...#subdirectory=clients/python-cli`)，wheel download 端点为辅助方案
+- **项目全貌**: PDF 上传 → 5 种格式下载，多用户/多 GPU/Web+CLI 双端，缺测试和发布流程
+
 ## 2026-06-27
 
 ### Peer dispatch — implementation complete
