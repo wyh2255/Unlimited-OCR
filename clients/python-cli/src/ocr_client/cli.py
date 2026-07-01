@@ -111,11 +111,15 @@ def _download_and_extract(
         _err(console, f"download aborted: {detail}")
         return 1
 
+    base_name = task_id
+    if data.get("pdf_name"):
+        base_name = Path(data["pdf_name"]).stem
+
     if fmt == "md":
-        target_path = out_root / f"{task_id}.zip"
+        target_path = out_root / f"{base_name}.zip"
     else:
         ext = "tex" if fmt == "latex" else fmt
-        target_path = out_root / f"{task_id}.{ext}"
+        target_path = out_root / f"{base_name}.{ext}"
 
     url = f"{server}/api/v1/tasks/{task_id}/download?format={fmt}"
     try:
@@ -155,7 +159,7 @@ def _download_and_extract(
         return 2
 
     if fmt == "md":
-        extract_dir = out_root / task_id
+        extract_dir = out_root / base_name
         extract_dir.mkdir(parents=True, exist_ok=True)
         try:
             with zipfile.ZipFile(target_path) as zf:
