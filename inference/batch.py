@@ -86,6 +86,9 @@ def start_server(args):
 
     os.makedirs(os.path.dirname(os.path.abspath(args.server_log)) or ".", exist_ok=True)
     env = os.environ.copy()
+    # Ensure venv bin dir is on PATH — SGLang JIT (tvm_ffi) needs ninja
+    venv_bin = os.path.dirname(sys.executable)
+    env["PATH"] = f"{venv_bin}:{env.get('PATH', '')}"
     env["CUDA_VISIBLE_DEVICES"] = args.gpu
 
     cmd = [

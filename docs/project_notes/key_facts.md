@@ -48,6 +48,47 @@ User override per-task: `concurrency_hint` field in `POST /api/v1/tasks`,
 value 1–16. The detected value for a running task lives at
 `GET /api/v1/health → concurrency_recommended`.
 
+## Document Conversion (Phase A)
+
+- `GET /api/v1/tasks/{id}/download?format=md|docx|html|pdf|latex` (default `md`,
+  backward compatible — no `?format=` returns the original ZIP).
+- Implemented in `gateway/convert.py` via pandoc subprocess. 5 formats:
+  - `md`: plain copy of source ZIP (no pandoc call)
+  - `docx`: pandoc default
+  - `html`: `--standalone` + embed resources (version-dependent flag, see below)
+  - `pdf`: `--standalone --pdf-engine <engine>` (default weasyprint)
+  - `latex`: `--standalone` (full `\documentclass` document)
+- `--resource-path <tmp_dir>` so pandoc finds `images/*.jpg`.
+- HTML embedding flag is version-dependent: `--embed-resources` for pandoc
+  ≥2.19, `--self-contained` for older. Detected by `_pandoc_version()` with
+  lru_cache. See `bugs.md` 2026-06-30.
+- Conversion timeout: 180s. Errors raise `ConversionError` → HTTP 500.
+- Converted outputs cached at `outputs/{id}.{ext}`; second request for same
+  format is instant (cache hit ~0.01s). DELETE clears all caches.
+- CLI flag `--pandoc-pdf-engine` (default `weasyprint`; alt `xelatex`,
+  `pdflatex`, `wkhtmltopdf`).
+- System deps: `pandoc`, `libpango-1.0-0`, `libpangoft2-1.0-0`,
+  `fonts-noto-cjk` (for CJK PDF). Python dep: `weasyprint>=60`.
+- Dev host: pandoc 2.12 from conda, symlinked to `.venv/bin/pandoc` so it's
+  on PATH without shadowing the venv python.
+
+## 启动命令速查
+
+```bash
+# 必须确保 .venv/bin 在 PATH 中（否则 SGLang JIT 找不到 ninja）
+# ✅ 方式一（推荐）
+source .venv/bin/activate
+python -m gateway.server --workdir ./api_workdir --port 10001
+
+# ✅ 方式二（等价的单行）
+PATH=".venv/bin:$PATH" .venv/bin/python -m gateway.server --workdir ./api_workdir --port 10001
+
+# ❌ 错误方式 — ninja 会找不到
+.venv/bin/python -m gateway.server --workdir ./api_workdir --port 10001
+```
+
+另见 `bugs.md` 2026-06-26 和 2026-07-01 的 ninja 条目。
+
 ## Disk Layout (default `--workdir ./api_workdir`)
 
 ```
@@ -98,12 +139,18 @@ the actually-used mode).
 ## Dependency Surface (Python venv)
 
 - `.venv/` is the only venv. Created with `uv venv --python 3.12`.
-- `wheel/sglang-0.0.0.dev11416+g92e8bb79e-py3-none-any.whl` is the
-  SGLang wheel. Install via `uv pip install <wheel-path>`.
-- `kernels==0.11.7` and `pymupdf==1.27.2.2` are required.
-- `ninja` is required at runtime (sglang JIT). The venv has it
-  (`ls .venv/bin/ninja` should pass).
-- LAN-service deps are pinned in `requirements-api.txt`.
+- 安装分两步：
+  1. `uv pip install wheel/sglang-0.0.0.dev11416+g92e8bb79e-py3-none-any.whl`
+     — sglang 定制 wheel，内部声明了 torch、transformers、flashinfer、ninja
+     等核心 ML 依赖的精确版本（见 wheel 的 `METADATA` Requires-Dist）
+  2. `uv pip install -r requirements-api.txt`
+     — 项目级依赖清单，分三层：
+       - ML 层：pymupdf（sglang wheel 未覆盖的）
+       - 服务层：fastapi、uvicorn、weasyprint 等
+       - 开发层（注释掉）：ruff、black、isort、mypy
+- `ninja` 由 sglang wheel 自动安装，位于 `.venv/bin/ninja`。
+  启动 SGLang 前确保 PATH 包含 `.venv/bin/`（见上面"启动命令速查"）。
+- LAN-service deps are pinned in `requirements-api.txt`（重构后的完整版）。
 
 ## Vite Alias Foot-Gun
 

@@ -39,8 +39,10 @@ PDF and multi-page parsing only support the `base` mode.
 ```bash
 uv venv --python 3.12
 source .venv/bin/activate
+# ① 安装 sglang 定制 wheel（包含 torch/transformers/ninja/flashinfer 等）
 uv pip install wheel/sglang-0.0.0.dev11416+g92e8bb79e-py3-none-any.whl
-uv pip install kernels==0.11.7 pymupdf==1.27.2.2
+# ② 安装项目级依赖（API 服务 + pymupdf 等）
+uv pip install -r requirements-api.txt
 ```
 
 ### Development Tools (from `.gitignore` — pytest, black, isort, ruff, mypy)

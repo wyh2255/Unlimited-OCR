@@ -5,6 +5,22 @@ lines plus links / notes.
 
 ## 2026-07-01
 
+### Live 烟雾测试：ninja PATH 修复 + 14 页 PDF 解析成功
+
+- **Status**: 通过
+- **测试内容**:
+  - 上传 14 页论文 PDF（`Unlimited-OCR.pdf`，450 KB）→ 全部 14 页解析完成
+  - 结果：41 KB `result.md` + 3 张 figure 图片（总计 407 KB ZIP）
+  - 轮询 ~100s 完成任务（20 poll × 5s），无报错
+- **发现并修复**:
+  - ninja PATH 问题复发（第三次），本次从代码层根治：
+    在 `inference/batch.py:start_server()` 中显式将 `.venv/bin` 注入 env PATH
+  - 旧方案（文档提醒 + 启动加 PATH）仅运维层防护，SGLang 内部进程树
+    （`multiprocessing.set_executable` + `numactl` + `tvm_ffi`）会使 PATH 丢失
+  - 代码层 fix 后不再依赖启动方式
+- **bugs.md**: 更新 07-01 条目（根因 + 代码 fix），交叉引用旧 06-26 条目
+- **key_facts.md**: 新增启动命令速查 & venv PATH 注意事项（之前 session 更新）
+
 ### Phase A+B 合并到 A100-server + 项目状态总结
 
 - **Status**: 完成
@@ -27,6 +43,88 @@ lines plus links / notes.
 
 - **CLI 分发方案确定**: GitHub 直装 (`pip install git+https://...#subdirectory=clients/python-cli`)，wheel download 端点为辅助方案
 - **项目全貌**: PDF 上传 → 5 种格式下载，多用户/多 GPU/Web+CLI 双端，缺测试和发布流程
+
+## 2026-06-30
+
+### Phase A + B (document conversion + multi-user) — implementation complete
+
+- **Status**: Phase A Done · Phase B Done · Phase C deferred (per decision)
+- **Branch**: `feature/doc-conversion-and-multiuser` (6 commits, off `A100-server`)
+- **Plan**: `docs/plan/doc-conversion-and-multiuser-plan.md`
+
+- **Phase A — document conversion (pandoc + weasyprint)**:
+  - `gateway/convert.py`: pandoc wrapper, 5 formats (md/docx/html/pdf/latex),
+    auto-detects pandoc version for `--embed-resources` (≥2.19) vs
+    `--self-contained` (older); `--standalone` for latex/pdf; 180s timeout
+  - `gateway/server.py`: download endpoint `?format=` param (default md,
+    backward compat); conversion cache at `outputs/{id}.{ext}`; DELETE clears
+    caches; `--pandoc-pdf-engine` CLI flag (default weasyprint)
+  - Frontend: ResultViewer dropdown menu (5 formats); useApi.downloadAs()
+  - CLI: `download --format md|docx|html|pdf|latex`
+  - Docs: API_CONTRACT v1.2, README_API 文档转换输出 section, Dockerfile
+    +pandoc/libpango/fonts-noto-cjk, requirements-api +weasyprint
+  - ADR-007 (weasyprint), ADR-008 (server-side convert), ADR-009 (md default)
+  - E2E verified: all 5 formats return correct Content-Type + magic bytes;
+    cache hit 0.008s; DELETE cleans all caches
+
+- **Phase B — multi-user + sqlite persistence**:
+  - `gateway/users.py`: UserRegistry — token→owner from `~/.ocr_tokens.json`,
+    mtime hot-reload, single-token fallback (owner="self")
+  - `gateway/persist.py`: SQLite `tasks.db` (stdlib sqlite3); save/load/delete
+  - `gateway/auth.py`: get_token returns owner (not raw token)
+  - `gateway/state.py`: TaskState +owner +pdf_name; _task_to_dict outputs both
+  - `gateway/server.py`: create_task writes owner; `GET /me`; `GET /tasks?scope=`;
+    `--tokens-file` CLI; main() configures users + persists + recovers on startup
+    (running→completed if zip exists else→failed); DELETE clears sqlite row
+  - `gateway/tasks.py`: _persist() at every state transition
+  - Frontend: SettingsBar shows current user; TaskCard owner badge; TaskList
+    scope toggle + server refresh; useApi.whoami()/listTasks()
+  - CLI: `whoami` + `list [--scope mine|all] [--limit N]` (rich table)
+  - Docs: API_CONTRACT v1.3, README_API 多用户配置 section, ADR-010
+    (multi-token+sqlite), ADR-011 (no KB hook), key_facts updated
+  - E2E verified: /me, scope filtering, hot reload, single-token fallback,
+    sqlite recovery, delete clears row; live server + CLI whoami/list tested
+
+- **Phase C — knowledge base export hook**: not implemented (per ADR-011;
+  direction RAG vs wiki vs Obsidian undecided)
+
+- **Coordination notes**:
+  - 1 subagent returned empty (no changes) on first Phase A backend attempt;
+    coordinator did backend directly. Subsequent subagent calls succeeded.
+  - pandoc 2.12 (conda) on dev host; symlinked to .venv/bin/pandoc so it's
+    on PATH without shadowing venv python. `--embed-resources` not in 2.12
+    → version detection in convert.py handles both old and new pandoc.
+  - Found + fixed: _task_to_dict didn't output pdf_name (persisted but not
+    in API response); CLI list pdf_name column was empty until fix.
+  - Pre-existing ruff F401 (Header unused in server.py) left alone.
+
+### Phase A + B — live startup demo (real A100, no mocks)
+
+- **Status**: 11/11 functional tests passed on real hardware
+- **Setup**: 3-user tokens.json (alice/bob/carol), pre-seeded
+  `DEMO000000001` (alice, completed, 8 pages, LEMMA_paper.pdf) with real
+  result.md + 2 images in zip + sqlite row. Server on :10001.
+- **Results**:
+  1. `/health` → A100 40GB free, concurrency_recommended=8 ✓
+  2. `/me` → alice/bob/carol return correct owner; wrong/no token → 401 ✓
+  3. Task list scope filtering → alice sees 1, bob sees 0, all sees 1 ✓
+  4. 5-format download → md/docx/html/pdf/latex all HTTP 200, correct
+     Content-Type + magic bytes (PK/<!DO/%PDF/%) ✓
+  5. Conversion cache hit → docx 2nd request 0.025s (first ~1s) ✓
+  6. File content quality → PDF: Chinese + LEMMA + table render correctly;
+     DOCX: 31 paragraphs, 2 embedded images; HTML: 2 base64 images + table;
+     LaTeX: full `\documentclass` ✓
+  7. CLI `whoami` + `list` → rich table with owner/pdf_name columns ✓
+  8. CLI `download --format` × 5 → all succeed, md auto-extracts ✓
+  9. Persistence restart → kill server, restart, `recovered 1 tasks`,
+     task list + download still work ✓
+  10. Hot reload → add dave/remove bob in tokens.json, no restart, dave
+      works immediately, bob revoked immediately ✓
+  11. DELETE → clears zip + 4 format caches + sqlite row, list → 0 ✓
+- **Bugs found during demo**: none (all 3 known bugs already fixed in code
+  before demo: pandoc version flag, persist circular import, pdf_name
+  missing from API response).
+- **Cleanup**: demo tokens.json + DEMO task removed after demo.
 
 ## 2026-06-27
 

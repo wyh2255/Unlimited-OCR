@@ -36,6 +36,9 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Runtime workdir (server creates logs, outputs, tmp, tasks.db here)
+api_workdir/
+
 # Model weights (large, downloaded separately)
 Unlimited-OCR/
 
