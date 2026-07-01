@@ -15,16 +15,20 @@ in the project changes; do not delete old facts unless they are wrong.
 
 ## Authentication
 
-- Env var: `OCR_API_TOKEN`. If unset at server start, the server generates
-  `secrets.token_urlsafe(24)` and prints it once to stdout. Persist the
-  printed value to `~/.ocr_token` (chmod 600) for reuse.
 - Header: `Authorization: Bearer <token>`.
-- Comparison: `secrets.compare_digest`. Constant-time.
 - `GET /api/v1/health` is the only endpoint that does **not** require auth.
-- Multi-user mode: ~/.ocr_tokens.json (or --tokens-file / $OCR_TOKENS_FILE).
-  Format: {"tokens": [{"token": "t1", "owner": "alice"}, ...]}.
-  Hot-reloaded on mtime change. Falls back to single-token OCR_API_TOKEN
-  (owner="self") when file absent.
+- **Single-token mode** (backward compat): env var `OCR_API_TOKEN`. If unset
+  at server start, generates `secrets.token_urlsafe(24)` and prints once.
+  owner fixed to `"self"`.
+- **Multi-token mode** (Phase B): `~/.ocr_tokens.json` (or `--tokens-file` /
+  `$OCR_TOKENS_FILE`). Format: `{"tokens": [{"token": "t1", "owner": "alice"}, ...]}`.
+  Hot-reloaded on mtime change. Falls back to single-token mode when file
+  absent. File permission `chmod 600` recommended.
+- Token lookup via `gateway/users.py:UserRegistry.lookup()` (replaces the old
+  `secrets.compare_digest` against `STATE.token`). Returns owner string or
+  None. `gateway/auth.py:get_token` returns the owner, not the raw token.
+- `GET /api/v1/me` → `{"owner": "..."}`. `GET /api/v1/tasks?scope=mine|all`
+  filters by owner.
 
 ## CORS
 
@@ -93,11 +97,15 @@ PATH=".venv/bin:$PATH" .venv/bin/python -m gateway.server --workdir ./api_workdi
 
 ```
 ./api_workdir/
-├── tmp/<task_id>/         # per-task scratch; removed on completion
-├── outputs/<task_id>.zip  # final result; kept until DELETE
-├── logs/<task_id>_sglang.log   # SGLang log; kept until DELETE
-└── tasks.db                       # sqlite task persistence (Phase B)
+├── tmp/<task_id>/                        # per-task scratch; removed on completion
+├── outputs/<task_id>.zip                 # final result (result.md + images/); kept until DELETE
+├── outputs/<task_id>.{docx,html,pdf,tex} # conversion cache (Phase A); kept until DELETE
+├── logs/<task_id>_sglang.log             # SGLang log; kept until DELETE
+└── tasks.db                              # sqlite task persistence (Phase B)
 ```
+
+`DELETE /api/v1/tasks/<id>` removes zip + all 4 format caches + tmp + log +
+sqlite row.
 
 `DELETE /api/v1/tasks/<id>` removes all three.
 
