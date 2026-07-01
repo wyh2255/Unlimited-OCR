@@ -11,7 +11,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -305,15 +305,24 @@ def download_task(task_id: str, format: str = "md"):
     return FileResponse(out_path, media_type=media, filename=filename)
 
 
-@app.get("/api/v1/client/ocr-client.whl")
-def download_client():
-    """Redirect to the actual ocr-client wheel for remote install.
+@app.get("/api/v1/client/download")
+def download_client(request: Request):
+    """返回 ocr-client wheel 下载信息。
 
-    Usage on a remote machine:
-        pip install http://server:10001/api/v1/client/ocr-client.whl
-        # or
-        uv tool install http://server:10001/api/v1/client/ocr-client.whl
+    pip install http://server:10001/api/v1/client/download
+    uv tool install http://server:10001/static/client/ocr_client-{version}-py3-none-any.whl
     """
+    return _client_wheel_info(request)
+
+
+@app.get("/api/v1/client/ocr-client.whl")
+def redirect_client_wheel(request: Request):
+    """pip: redirect to the actual wheel file (pip doesn't validate URL filename)."""
+    info = _client_wheel_info(request)
+    return RedirectResponse(url=info["wheel_url"])
+
+
+def _client_wheel_info(request: Request) -> dict:
     wheels = sorted(Path("ocr-client/dist").glob("ocr_client-*.whl"))
     if not wheels:
         raise HTTPException(
@@ -321,9 +330,15 @@ def download_client():
             "No client wheel found. Run `bash scripts/build_ocr_client.sh` "
             "on the server first.",
         )
-    # Redirect to the actual wheel filename so uv sees a valid wheel URL
-    # (e.g. /static/client/ocr_client-0.2.0-py3-none-any.whl)
-    return RedirectResponse(url=f"/static/client/{wheels[-1].name}")
+    wheel = wheels[-1]
+    base = str(request.base_url).rstrip("/")
+    wheel_url = f"{base}/static/client/{wheel.name}"
+    return {
+        "version": wheel.name.split("-")[1],
+        "wheel_url": wheel_url,
+        "pip_install": f"pip install {base}/api/v1/client/ocr-client.whl",
+        "uv_tool_install": f"uv tool install {wheel_url}",
+    }
 
 
 @app.delete("/api/v1/tasks/{task_id}", dependencies=[Depends(get_token)])
