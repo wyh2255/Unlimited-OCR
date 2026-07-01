@@ -13,7 +13,8 @@ from typing import Optional
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from .auth import get_token
 from .concurrency import _get_gpu_info, detect_concurrency
@@ -35,6 +36,10 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["Content-Disposition"],
 )
+
+# Serve ocr-client dist directory so uv can download the wheel with a valid filename
+os.makedirs("ocr-client/dist", exist_ok=True)
+app.mount("/static/client", StaticFiles(directory="ocr-client/dist"), name="client_dist")
 
 
 def _get_backend_for_task(task_id: str) -> Optional[str]:
@@ -302,7 +307,7 @@ def download_task(task_id: str, format: str = "md"):
 
 @app.get("/api/v1/client/ocr-client.whl")
 def download_client():
-    """Serve the ocr-client wheel for remote `pip install` / `uv tool install`.
+    """Redirect to the actual ocr-client wheel for remote install.
 
     Usage on a remote machine:
         pip install http://server:10001/api/v1/client/ocr-client.whl
@@ -316,8 +321,9 @@ def download_client():
             "No client wheel found. Run `bash scripts/build_ocr_client.sh` "
             "on the server first.",
         )
-    return FileResponse(str(wheels[-1]), media_type="application/octet-stream",
-                        filename=wheels[-1].name)
+    # Redirect to the actual wheel filename so uv sees a valid wheel URL
+    # (e.g. /static/client/ocr_client-0.2.0-py3-none-any.whl)
+    return RedirectResponse(url=f"/static/client/{wheels[-1].name}")
 
 
 @app.delete("/api/v1/tasks/{task_id}", dependencies=[Depends(get_token)])
