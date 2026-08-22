@@ -2,6 +2,81 @@
 
 Resolved bugs and their root causes, organized by date (newest first).
 
+## 2026-08-22
+
+### start_server.sh 用 setsid 导致 pidfile 记录死 PID，幂等检查失效
+
+- **Issue**: 初版 `start_server.sh` 用 `setsid nohup python ... &` 后台启动，
+  pidfile 写入的 `$!` 是 setsid 的 PID——setsid fork 后立即退出，真正的网关
+  进程是另一个 PID。重复执行脚本时 `kill -0 $(cat pidfile)` 判定"未运行"，
+  于是又拉起一个实例（后者因端口占用退出）。
+- **Root Cause**: `setsid` 无参数调用时会 fork 出新会话再 exec，父进程即刻退出，
+  shell 的 `$!` 与最终进程 PID 不一致。
+- **Solution**: 改为裸 `nohup python ... & disown`——nohup+输出重定向已足够
+  脱离终端，且 `$!` 就是真实网关 PID；幂等检查同时加 curl health 探测兜底。
+- **Prevention**: 需要记录后台进程 PID 时不要用无参数 `setsid`；
+  幂等检查用服务自身的 health 端点而不是只信 pidfile。
+
+### 本机无 ss/netstat/lsof/fuser，脚本端口检查静默失效
+
+- **Issue**: start_server.sh 初版用 `ss -tln | grep :PORT` 检查端口占用，
+  本机没有 ss 命令，`2>/dev/null` 把报错吞掉后 grep 匹配空输出 → 检查形同虚设，
+  已被占用的端口通过了检查。
+- **Root Cause**: 精简容器/服务器未装 iproute2 工具集；错误重定向掩盖了命令不存在。
+- **Solution**: 统一改用 `curl -sf -m2 http://127.0.0.1:$PORT/api/v1/health`
+  （已在跑则提示退出）+ bash `/dev/tcp` 探测（通但 health 不响应则报错）。
+- **Prevention**: 在这台机器上写端口探测逻辑只用 curl 或 /dev/tcp，
+  不要引入 ss/netstat/lsof 依赖（AGENTS.md「本机特有事实」有记录）。
+
+## 2026-07-26
+
+### sgl_kernel 缺少 sm89 变体，RTX 4090 (sm89) 需强制 SGL_KERNEL_ARCH=90
+
+- **Issue**: SGLang server 启动失败，sgl_kernel 报 `Could not load any common_ops library!`。
+  GPU 是 RTX 4090 (compute capability 8.9, SM89)，但 sgl_kernel 只有 sm90 和 sm100 变体。
+- **Root Cause**: 定制 sglang wheel 的 sgl_kernel 只打包了 sm90 (RTX 5090) 和 sm100 (未来架构)
+  的预编译二进制。SM89 没有对应二进制，且自动选择逻辑不会 fallback 到兼容架构。
+- **Solution**: 设置环境变量 `SGL_KERNEL_ARCH=90` 强制使用 SM90 变体（SM90 二进制可后向兼容
+  SM89 的大部分功能）。
+- **Prevention**: 启动时始终设置 `SGL_KERNEL_ARCH=90`（从 `inference/batch.py` 或启动脚本）。
+  RTX 4090 用户开机启动必须包含此环境变量。
+
+### libnuma.so.1 缺失导致 sgl_kernel 加载失败
+
+- **Issue**: sgl_kernel 的 sm100/common_ops.abi3.so 依赖 libnuma.so.1，但系统缺少。
+- **Root Cause**: 容器/系统未安装 `libnuma-dev`/`libnuma1`，导致动态链接失败。
+- **Solution**: `apt install -y libnuma-dev`
+- **Prevention**: 环境准备步骤中补充 `apt install -y libnuma-dev g++`。
+
+### g++ 缺失导致 SGLang JIT kernel 编译失败
+
+- **Issue**: SGLang JIT (tvm_ffi) 调用 ninja + nvcc 编译 fused_rope kernel 时，
+  `gcc: fatal error: cannot execute 'cc1plus': execvp: No such file or directory`。
+- **Root Cause**: 系统没有安装 g++。nvcc 的前端编译器需要 g++/cc1plus 来处理 host 端代码。
+- **Solution**: `apt install -y g++`
+- **Prevention**: 环境准备步骤中补充 g++。
+
+### flash_attn 命名空间包缺少核心函数
+
+- **Issue**: 模型加载时 `from flash_attn import flash_attn_func` 报 `ImportError`。
+- **Root Cause**: sglang 定制 wheel 安装了一个 flash_attn 命名空间包（无 `__init__.py`），
+  只有一个 `cute/` 子目录，不包含 `flash_attn_func` 等核心函数。但
+  `is_flash_attn_2_available()` 检测到包存在（版本号 4.0.0b19），返回 True，
+  导致模型代码尝试导入不存在的函数。
+- **Solution**: 修改 `Unlimited-OCR/modeling_deepseekv2.py`，在 `is_flash_attn_2_available()`
+  为 True 的情况下用 `try/except ImportError` 包裹导入语句，静默跳过。
+- **Prevention**: 安装 flash-attn 完整包失败（CUDA 版本 13.2 vs torch 12.8 不匹配），
+  所以只能修改模型代码做降级处理。
+
+### transformers 5.3.0 移除了 is_torch_fx_available
+
+- **Issue**: 模型代码 `from transformers.utils.import_utils import is_torch_fx_available` 报错。
+- **Root Cause**: sglang 定制 wheel 安装了 transformers 5.3.0，但该版本已移除
+  `is_torch_fx_available` 函数（被 `is_torch_fx_proxy` 替代）。模型代码基于旧版 transformers。
+- **Solution**: 修改 `Unlimited-OCR/modeling_deepseekv2.py`，用 `try/except ImportError`
+  提供兼容 fallback 实现。
+- **Prevention**: 如果未来升级 transformers，需要同步检查模型代码的 import 兼容性。
+
 ## 2026-07-01
 
 ### Ninja not on PATH（再次发生，代码层根治）

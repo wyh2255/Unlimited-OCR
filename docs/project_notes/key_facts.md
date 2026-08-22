@@ -78,20 +78,101 @@ value 1–16. The detected value for a running task lives at
 
 ## 启动命令速查
 
+### 开机完整启动流程 (RTX 4090)
+
 ```bash
-# 必须确保 .venv/bin 在 PATH 中（否则 SGLang JIT 找不到 ninja）
-# ✅ 方式一（推荐）
+cd /root/Unlimited-OCR
+
+# 1. 激活虚拟环境
 source .venv/bin/activate
-python -m gateway.server --workdir ./api_workdir --port 10001
 
-# ✅ 方式二（等价的单行）
-PATH=".venv/bin:$PATH" .venv/bin/python -m gateway.server --workdir ./api_workdir --port 10001
+# 2. 设置关键环境变量
+export CUDA_HOME=/usr/local/cuda
+export SGL_KERNEL_ARCH=90          # RTX 4090 (sm89) 强制使用 sm90 kernel
+export OCR_API_TOKEN="$(cat ~/.ocr_token 2>/dev/null || python -c 'import secrets;print(secrets.token_urlsafe(24))')"
 
-# ❌ 错误方式 — ninja 会找不到
-.venv/bin/python -m gateway.server --workdir ./api_workdir --port 10001
+# 3. 设置 token 持久化（首次启动）
+echo "$OCR_API_TOKEN" > ~/.ocr_token && chmod 600 ~/.ocr_token
+
+# 4. 创建日志和临时文件目录
+mkdir -p log api_workdir
+
+# 5. 后台启动网关服务
+setsid nohup python -m gateway.server \
+    --host 0.0.0.0 \
+    --port 10001 \
+    --workdir ./api_workdir \
+    --model-dir ./Unlimited-OCR \
+    --gpu 0 \
+    --cors-origin '*' \
+    > log/api_server.log 2>&1 < /dev/null &
+disown
+
+# 6. 验证
+sleep 3
+curl -s http://127.0.0.1:10001/api/v1/health | python -m json.tool
 ```
 
-另见 `bugs.md` 2026-06-26 和 2026-07-01 的 ninja 条目。
+### 一键脚本 `/root/Unlimited-OCR/start_server.sh`
+
+```bash
+#!/bin/bash
+set -e
+cd "$(dirname "$0")"
+source .venv/bin/activate
+export CUDA_HOME=/usr/local/cuda
+export SGL_KERNEL_ARCH=90
+OCR_API_TOKEN="$(cat ~/.ocr_token 2>/dev/null || python -c 'import secrets;print(secrets.token_urlsafe(24))')"
+echo "$OCR_API_TOKEN" > ~/.ocr_token && chmod 600 ~/.ocr_token
+export OCR_API_TOKEN
+mkdir -p log api_workdir
+setsid nohup python -m gateway.server \
+    --host 0.0.0.0 --port 10001 \
+    --workdir ./api_workdir \
+    --model-dir ./Unlimited-OCR \
+    --gpu 0 --cors-origin '*' \
+    > log/api_server.log 2>&1 < /dev/null &
+disown
+echo "Gateway server starting on port 10001 (PID $!)"
+echo "Token: $OCR_API_TOKEN"
+```
+
+### 必须的环境变量
+
+| 变量 | 值 | 原因 |
+|------|----|------|
+| `CUDA_HOME` | `/usr/local/cuda` | SGLang 需要找到 nvcc |
+| `SGL_KERNEL_ARCH` | `90` | RTX 4090 (sm89) 只能用 sm90 kernel |
+| `OCR_API_TOKEN` | 随机字符串 | API Bearer token |
+
+### 缺失系统包
+
+如果遇到 JIT 编译失败，检查以下系统包：
+
+```bash
+apt-get install -y libnuma-dev g++ ninja-build
+```
+
+### 验证清单
+
+```bash
+# GPU 可用
+nvidia-smi
+
+# Python 可用
+source .venv/bin/activate && python -c "import torch,sglang,fitz; print('OK')"
+
+# 端口空闲
+ss -tln | grep -E '1000[01]' || echo "OK"
+
+# ninja 可用
+ls .venv/bin/ninja
+
+# sgl_kernel 兼容
+python -c "import os; os.environ['SGL_KERNEL_ARCH']='90'; from sgl_kernel import common_ops; print('sgl_kernel OK')"
+```
+
+另见 `bugs.md` 2026-06-26、2026-07-01（ninja）和 2026-07-26（sgl_kernel 架构 / g++）。
 
 ## Disk Layout (default `--workdir ./api_workdir`)
 

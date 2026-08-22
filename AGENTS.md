@@ -44,6 +44,7 @@ This project maintains institutional knowledge in `docs/project_notes/` for cons
 
 ## Quick Index
 
+- **One-click deployment (fresh clone → running service)**: README「一键部署」section; scripts `scripts/setup_env.sh` / `start_server.sh` / `stop_server.sh` / `start_gateway.sh`
 - Architecture (4 paths): see [`docs/architecture.md`](docs/architecture.md)
 - Image modes (5 total, SGLang processor): see [`docs/image-modes-reference.md`](docs/image-modes-reference.md)
 - API wire protocol: see [`API_CONTRACT.md`](API_CONTRACT.md) (中文, canonical) / [`docs/api-contract-en.md`](docs/api-contract-en.md) (English supplement)
@@ -64,7 +65,9 @@ This project maintains institutional knowledge in `docs/project_notes/` for cons
 | `inference/cli.py` / `inference/batch.py` | SGLang batch CLI: starts server, fans out concurrent requests for an image dir or PDF. Exports `run_inference(*, pdf, output_dir, concurrency, model_dir, gpu, image_mode, server_log) -> dict` for programmatic use. |
 | `model/ocr_pdf.py` | Transformers direct: PDF → OCR → single `result.md`. Supports `--no-page-split` to remove `<PAGE>` separators. |
 | `inference/postprocess.py` | Clean up raw SGLang output: strips `<|det|>` bbox tags, crops embedded images from PDF, merges per-page files into one `result.md`. |
-| `gateway/server.py` | FastAPI gateway (LAN service): wraps the SGLang path behind HTTP for remote clients. Listens on `:10001`, single-task FIFO worker queue, Bearer-token auth, GPU-aware concurrency auto-tiering, CORS middleware for browser clients. |
+| `gateway/server.py` | FastAPI gateway (LAN service): wraps the SGLang path behind HTTP for remote clients. Listens on `:10001`, single-task FIFO worker queue, Bearer-token auth, GPU-aware concurrency auto-tiering, CORS middleware for browser clients. Launch via `./start_server.sh` (daemon) or `./start_gateway.sh` (foreground). |
+| `scripts/setup_env.sh` | One-click first-time env installer for a fresh clone: apt packages → `.venv` (uv, py3.12) → custom sglang wheel + requirements-api.txt → model weights download if missing → import verification. Idempotent. |
+| `start_server.sh` / `stop_server.sh` / `start_gateway.sh` | Ops scripts: idempotent background start (health-wait + pidfile), graceful stop (SIGTERM→SIGKILL after 15 s), foreground debug start. Env-overridable: `PORT` / `HOST` / `GPU` / `MODEL_DIR` / `SGL_KERNEL_ARCH` / `CUDA_HOME`. |
 | `clients/python-cli/src/ocr_client/cli.py` | CLI client for the gateway (works on any LAN host, no GPU required): subcommands `upload` / `status` / `download` / `delete` / `health`. Optional `rich` for progress bars, falls back to plain text. |
 | `web/` | Browser frontend for the LAN service: Vue 3 + Vite + TypeScript SPA. Three tabs (upload / task list / result viewer), drag-drop PDF upload, live polling, on-line Markdown + image preview. |
 | `API_CONTRACT.md` | Single source of truth for HTTP contract: endpoints, request/response shapes, error codes, directory layout, GPU tier table. Server and client must match this. |
@@ -94,10 +97,21 @@ Multi-image / PDF must use `tiny`, `small`, or `base` (others raise `ValueError`
 
 ## Setup
 
+One-click for a fresh clone (installs system packages, `.venv`, custom sglang wheel, model weights):
+
+```bash
+bash scripts/setup_env.sh    # idempotent; --skip-system to skip apt packages
+```
+
+Manual equivalent:
+
 ```bash
 uv venv --python 3.12 && source .venv/bin/activate
 uv pip install wheel/sglang-0.0.0.dev11416+g92e8bb79e-py3-none-any.whl
 uv pip install kernels==0.11.7 pymupdf==1.27.2.2
+uv pip install -r requirements-api.txt
+# Model weights are gitignored (~6.4 GB):
+hf download baidu/Unlimited-OCR --local-dir ./Unlimited-OCR
 ```
 
 **No `pyproject.toml` or `setup.py`** — not a pip-installable package. Dependencies are listed in README only.
@@ -341,204 +355,139 @@ After Round 2, the `ocr-client` package was packaged and the README had 6 sectio
 
 ## Startup Runbook (LAN service end-to-end)
 
-> Assumes the model is already in `Unlimited-OCR/` and the existing venv is healthy (i.e. `python -c "import torch, sglang"` works). If not, see `README.md` for first-time setup.
+> **2026-08-22 起推荐一键脚本路径**（详见 README「一键部署」章节）。以下手册以
+> 本机 `/root/Unlimited-OCR`（RTX 4090 24 GB, sm89）为准；老的手动启动方式保留在
+> 章节末尾备查。
 
-### Server side — bring up the gateway (one time per host)
+### 一键脚本总览（仓库根目录，均已提交）
+
+| 脚本 | 用途 | 关键行为 |
+|------|------|----------|
+| `scripts/setup_env.sh` | 首次部署装环境（幂等） | apt 装 `libnuma-dev g++ ninja-build` → `uv venv` (py3.12) → 定制 sglang wheel + requirements-api.txt → 模型缺失时从 HF 下载 (~6.4 GB) → 逐项验证 import |
+| `start_server.sh` | 一键后台启动网关（日常用这个） | 幂等（health 探测已在跑则退出）；Token 取 `$OCR_API_TOKEN` > `~/.ocr_token` > 自动生成持久化；写 PID 到 `log/api_server.pid`；等 health 就绪才返回；失败时 tail 日志 |
+| `stop_server.sh` | 优雅停止 | 读 pidfile 发 SIGTERM，15 s 后兜底 SIGKILL；提示残留 sglang 进程（不自动杀） |
+| `start_gateway.sh` | 前台调试启动 | 不后台化、日志直打终端，Ctrl+C 停止 |
+
+三个 start/stop 脚本共享同一套环境变量默认值：`PORT=10001 HOST=0.0.0.0 GPU=0
+MODEL_DIR=./Unlimited-OCR CUDA_HOME=/usr/local/cuda SGL_KERNEL_ARCH=90`，
+均可用同名环境变量覆盖（如 `PORT=10002 GPU=1 ./start_server.sh`）。
+
+### 新机器从零到可用（三条命令）
 
 ```bash
-cd /home/user/.WYH/Unlimited-OCR
-source .venv/bin/activate
-
-# 1. Install LAN-service dependencies (idempotent; cheap if already there)
-uv pip install -r requirements-api.txt
-
-# 2. Pick an auth token. Either let the server generate one (printed once on
-#    startup) or set your own. Persist the value somewhere safe — restarting
-#    with a different token invalidates all clients.
-export OCR_API_TOKEN="$(python -c 'import secrets;print(secrets.token_urlsafe(24))')"
-echo "$OCR_API_TOKEN" > ~/.ocr_token
-chmod 600 ~/.ocr_token
-
-# 3. Launch in the background, fully detached from the shell. Use setsid so the
-#    process survives shell exit, and a log file so you can debug startup.
-#    --cors-origin '*' is the LAN default; tighten it if you only need specific
-#    origins (browser frontend on :5173, etc.).
-mkdir -p log
-setsid nohup python -m gateway.server \
-    --host 0.0.0.0 \
-    --port 10001 \
-    --workdir ./api_workdir \
-    --model-dir ./Unlimited-OCR \
-    --gpu 0 \
-    --cors-origin '*' \
-    > log/api_server.log 2>&1 < /dev/null &
-disown
+git clone -b A100-server https://github.com/wyh2255/Unlimited-OCR.git
+cd Unlimited-OCR
+bash scripts/setup_env.sh && ./start_server.sh
 ```
 
-> **Why `source .venv/bin/activate` is required, not optional** — see Pitfall #14.
-> `python -m sglang.launch_server` shells out to `ninja` to JIT-build the rotary
-> kernel on the first request. If `.venv/bin` isn't on the parent Python's PATH,
-> that subprocess dies with `FileNotFoundError: 'ninja'` and the SGLang child
-> crashes. Two acceptable launch patterns:
-> - `source .venv/bin/activate && setsid nohup python -m gateway.server ...` (preferred; all venv binaries resolve)
-> - `PATH=/path/.venv/bin:$PATH setsid nohup python -m gateway.server ...` (works without activating)
+### 本机（RTX 4090 / A100-server 分支）特有事实
 
-**Verify the server is alive** (replace `$IP` with the host's LAN IP, e.g. `172.17.166.37`):
+- **GPU**: RTX 4090 24 GB (sm89)。sgl_kernel 只有 sm90/sm100 预编译变体，
+  必须设 `SGL_KERNEL_ARCH=90`（脚本已内置默认值；A100 sm80 可设 80 或留空）。
+- **CUDA_HOME=/usr/local/cuda**（SGLang JIT 需要 nvcc）。
+- **系统里没有 ss/netstat/lsof/fuser** —— 端口探测一律用 curl health +
+  bash `/dev/tcp`，不要往脚本里加 ss 命令。
+- Token 当前为 `~/.ocr_token` 中的固定值（历史遗留），重启不变。
+- SGLang 懒启动：网关起来后显存占用很低，首个任务到达才拉起推理引擎
+  （首次 ~30–40 s 预热），不是故障。
+
+### Server side — bring up the gateway
 
 ```bash
-curl -s http://127.0.0.1:10001/api/v1/health | python -m json.tool
-# Expect: status=ok, gpu.name, concurrency_recommended=8 on a 40 GB A100
-
-# From another host on the LAN:
-curl -s http://$IP:10001/api/v1/health
+./start_server.sh        # 后台守护; 输出 LAN URL + Token + 日志路径
+./stop_server.sh         # 重启前先停
+tail -f log/api_server.log                 # 网关日志
+tail -f api_workdir/logs/$TASK_ID_sglang.log   # 单任务 SGLang 日志
 ```
 
-**Verify auth works** (no token → 401):
+**Verify the server is alive** (replace `$IP` with the host's LAN IP):
 
 ```bash
+curl -s http://127.0.0.1:10001/api/v1/health | python3 -m json.tool
+# Expect: status=ok, gpu.name="NVIDIA GeForce RTX 4090", concurrency_recommended=4 (24 GB 卡)
+
+curl -s http://$IP:10001/api/v1/health      # from another LAN host
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:10001/api/v1/tasks/anything
-# Expect: 401
+# Expect: 401 (auth path alive)
 ```
 
 ### Client side — install on every laptop that will use the service
 
 ```bash
-# On the laptop. Install the ocr-client package:
-uv tool install clients/python-cli    # or: pip install clients/python-cli
-# Then set the server URL and the token in your shell rc / .env:
-export OCR_SERVER="http://172.17.166.37:10001"
-export OCR_API_TOKEN="$(cat ~/.ocr_token)"   # the value from step 2 above
+pip install clients/python-cli          # or: uv tool install clients/python-cli
+export OCR_SERVER="http://<server-ip>:10001"
+export OCR_API_TOKEN="$(ssh server cat ~/.ocr_token)"
+
+ocr-client health                        # expect status=ok
+ocr-client upload my.pdf --watch         # 上传→进度→自动下载解压到 ./my/
 ```
 
-**Smoke-test from the laptop**:
+### Daily ops
 
 ```bash
-ocr-client health
-# Expect: status=ok, gpu info, concurrency_recommended=8
-
-ocr-client status 000000000000 --server "$OCR_SERVER" --token "$OCR_API_TOKEN"
-# Expect: HTTP 404 (task not found) — confirms token is right and 404 path is alive
-```
-
-### Daily use — submit a PDF and collect the result
-
-```bash
-# One-shot: upload → wait → download → unzip
-ocr-client upload my.pdf --watch
-
-# Or manually, for a long-running task
-TASK_ID=$(ocr-client upload my.pdf | tail -1)   # bare task_id on stdout
-ocr-client status $TASK_ID --watch
-ocr-client download $TASK_ID --out ./out        # writes ./out/$TASK_ID.zip
-                                                # + extracts to ./out/$TASK_ID/
-```
-
-The final structure on disk is:
-
-```
-./out/$TASK_ID/
-├── result.md
-└── images/
-    ├── page_0002_0.jpg
-    ├── page_0002_1.jpg
-    └── ...
-```
-
-### Server-side daily operations
-
-```bash
-cd /home/user/.WYH/Unlimited-OCR
-source .venv/bin/activate
-
-# Tail the API gateway log
-tail -f log/api_server.log
-
-# Tail a specific task's SGLang log (one file per task; survives after the task ends)
-tail -f api_workdir/logs/$TASK_ID_sglang.log
-
-# Watch GPU usage in real time (in another terminal)
-watch -n 2 nvidia-smi
-
-# List all currently tracked tasks (in-memory; restart wipes this)
-curl -s -H "Authorization: Bearer $OCR_API_TOKEN" \
-    http://127.0.0.1:10001/api/v1/tasks/whatever
-# (no bulk-list endpoint exists; task_ids are returned by `ocr-client upload`)
-
-# Delete a task and free its disk
+# Delete a task and free its disk (removes zip + tmp + sglang log + caches)
 ocr-client delete $TASK_ID
-# Removes: api_workdir/outputs/$TASK_ID.zip,
-#          api_workdir/tmp/$TASK_ID/,
-#          api_workdir/logs/$TASK_ID_sglang.log
 
-# Reap a runaway task that no longer has a client (e.g. client died)
-# 1. Find the orphan sglang server holding GPU
+# Reap an orphan SGLang holding GPU after a crash
 nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv
-# 2. Kill it
-kill -TERM <pid>     # SIGTERM → SGLang drains in-flight requests and exits
-# (avoid SIGKILL unless TERM didn't work; SIGKILL on a parent gateway/server.py also
-#  orphans the SGLang subprocess — see Pitfall #1 above)
+kill -TERM <pid>    # SIGTERM drains in-flight requests; avoid SIGKILL (Pitfall #1)
 
-# Restart the API gateway (after code/config changes)
-pkill -TERM -f "gateway.server"
-sleep 2
-# Then re-run the launch command from the "Server side" section
+# Restart gateway after code changes
+./stop_server.sh && ./start_server.sh
+
+# 开机自启（可选）
+# crontab -e:  @reboot cd /root/Unlimited-OCR && ./start_server.sh >> log/boot.log 2>&1
 ```
 
 ### Disk layout on the server host
 
 ```
-/home/user/.WYH/Unlimited-OCR/
-├── gateway/server.py         # the FastAPI gateway
+/root/Unlimited-OCR/
+├── gateway/server.py           # the FastAPI gateway
 ├── clients/
-│   ├── python-cli/           # CLI client package
-│   └── web/                  # browser frontend (Vue 3 + Vite)
-├── requirements-api.txt
-├── log/
-│   └── api_server.log        # gateway stdout/stderr (rotation = manual)
-└── api_workdir/              # default --workdir
-    ├── tmp/$TASK_ID/         # per-task scratch; removed on completion
-    ├── outputs/$TASK_ID.zip  # final result; kept until DELETE
-    └── logs/$TASK_ID_sglang.log   # SGLang log; kept until DELETE
+│   ├── python-cli/             # CLI client package
+│   └── web/                    # browser frontend (Vue 3 + Vite)
+├── scripts/setup_env.sh        # first-time env installer
+├── Unlimited-OCR/              # model weights (gitignored, ~6.4 GB)
+├── wheel/sglang-*.whl          # patched sglang (committed; never use PyPI sglang)
+├── log/api_server.log          # gateway stdout/stderr (+ api_server.pid)
+└── api_workdir/                # default --workdir
+    ├── tmp/$TASK_ID/           # per-task scratch; removed on completion
+    ├── outputs/$TASK_ID.zip    # final result (+ .docx/.html/.pdf/.tex caches); kept until DELETE
+    ├── logs/$TASK_ID_sglang.log    # SGLang log; kept until DELETE
+    └── tasks.db                # sqlite task persistence (survives restart)
 ```
-
-### Web frontend — dev or production deployment
-
-**Dev mode (single host, hot reload)**:
-
-```bash
-# Terminal 1: backend (with venv activated; see Pitfall #14)
-cd /home/user/.WYH/Unlimited-OCR
-source .venv/bin/activate
-python -m gateway.server --port 10001 --cors-origin http://127.0.0.1:5173
-
-# Terminal 2: frontend
-cd clients/web
-pnpm install    # first time only
-pnpm dev        # → http://127.0.0.1:5173 (LAN-accessible on 0.0.0.0)
-```
-
-**Production mode (separate static host for the SPA)**:
-
-```bash
-# Build once
-cd web && pnpm build       # → web/dist/ (79 KB gz JS, 4 KB gz CSS)
-
-# Serve web/dist/ from any static host (nginx / caddy / S3+CloudFront)
-# Then set --cors-origin to that host on the backend
-python -m gateway.server --port 10001 --cors-origin https://ocr.example.com
-```
-
-**Client prerequisites**: browser with native `fetch`, `DecompressionStream`, and `URL.createObjectURL` (Chrome 80+, Firefox 113+, Safari 16.4+). No additional software on the laptop.
 
 ### Pre-flight checklist before the first real run
 
-1. `python -m gateway.server --help` — confirms all six CLI flags are present (host, port, workdir, model-dir, gpu, **cors-origin**).
-2. `nvidia-smi` — confirms the target GPU is free (no orphaned processes).
-3. Port `:10001` not in use: `ss -tln | grep 10001` (should be empty before start).
-4. Port `:10000` is **not** in use before starting the gateway: `ss -tln | grep 10000` should be empty. If a stale SGLang is holding it, `pkill -TERM -f sglang.launch_server`.
-5. The token file `~/.ocr_token` is `chmod 600` and the laptop copies it with the same permissions.
-6. `ls .venv/bin/ninja` exists — otherwise sglang's first-request JIT will fail. If missing, `source .venv/bin/activate && pip install ninja` (see Pitfall #14).
-7. If serving the browser frontend, either pass `--cors-origin '*'` (LAN) or set it to the exact frontend origin (production). Without it, the browser will block every API call.
+1. `nvidia-smi` — driver works, target GPU free of orphaned processes.
+2. Port `:10001` free — this box has no ss/lsof; probe with
+   `curl -m2 http://127.0.0.1:10001/api/v1/health` (should fail) before manual launches.
+   `start_server.sh` does this automatically.
+3. Port `:10000` free for SGLang (started lazily per task). Stale one:
+   `pkill -TERM -f sglang.launch_server`.
+4. `ls .venv/bin/ninja` exists — otherwise sglang's first-request JIT fails (Pitfall #14).
+5. `~/.ocr_token` exists with mode 600; laptops copy it verbatim.
+6. Browser frontend needs CORS: both scripts pass `--cors-origin '*'`; tighten for production.
+7. After any change to gateway code: `./stop_server.sh && ./start_server.sh`.
+
+### Legacy manual launch (kept for reference; prefer the scripts above)
+
+```bash
+source .venv/bin/activate
+export CUDA_HOME=/usr/local/cuda SGL_KERNEL_ARCH=90
+export OCR_API_TOKEN="$(cat ~/.ocr_token)"
+nohup python -m gateway.server \
+    --host 0.0.0.0 --port 10001 \
+    --workdir ./api_workdir --model-dir ./Unlimited-OCR \
+    --gpu 0 --cors-origin '*' \
+    > log/api_server.log 2>&1 < /dev/null &
+disown
+```
+
+> **Why activation is required** (Pitfall #14): `python -m sglang.launch_server`
+> shells out to `ninja` for JIT on first request; without `.venv/bin` on PATH it
+> dies with `FileNotFoundError: 'ninja'`. The scripts handle this via `activate`.
 
 ## Project Memory System
 

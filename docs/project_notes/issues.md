@@ -3,6 +3,44 @@
 Date-ordered log of completed work. Newest first. Each entry should be 1–3
 lines plus links / notes.
 
+## 2026-08-22
+
+### 一键部署体系：脚本整理 + README/AGENTS 部署手册
+
+- **Status**: 完成
+- **操作**:
+  - 重写 `start_server.sh`（幂等后台启动：health 探测 + pidfile + 就绪等待）、`start_gateway.sh`
+    （前台调试，去掉硬编码 /root 路径与固定 token）
+  - 新增 `stop_server.sh`（pidfile SIGTERM → 15s 后 SIGKILL）与 `scripts/setup_env.sh`
+    （首次部署：apt 系统包 → uv venv → 定制 wheel + requirements-api.txt → HF 模型下载 → import 验证）
+  - README.md 新增「一键部署」章节（要求→安装→启动→验证→客户端→FAQ→环境变量表）；
+    AGENTS.md Startup Runbook 全量改写为一键脚本路径，保留手动方式备查
+  - 本机验证：start（health ok / 401 鉴权 ok）→ 幂等重入 → stop 全链路通过
+- **坑**: 初版用 `setsid nohup ... &` 导致 `$!` 记录的是已退出的 setsid 父 PID，
+  pidfile 失效；且本机无 ss/netstat/lsof，端口检查静默通过。改为裸 nohup+disown +
+  curl health 探测。见 bugs.md 2026-08-22。
+
+## 2026-07-26
+
+### 环境搭建 + SGLang 端到端测试 + LAN 网关部署 (RTX 4090)
+
+- **Status**: 完成
+- **操作**:
+  - 创建 `.venv` (uv venv --python 3.12)
+  - 安装 sglang 定制 wheel + kernels 0.11.7 + pymupdf 1.27.2.2
+  - 安装 API 依赖 (requirements-api.txt)
+  - 修复问题: `libnuma.so.1` 缺失 → `apt install libnuma-dev`
+  - 修复问题: `SGL_KERNEL_ARCH=90` 环境变量 (sgl_kernel 只有 sm90/sm100 变体, RTX 4090 是 sm89)
+  - 修复问题: `g++` 缺失 → `apt install g++`
+  - 修复问题: `is_torch_fx_available` 在 transformers 5.3.0 不存在 → 修改模型代码添加兼容 fallback
+  - 修复问题: flash_attn 命名空间包缺少 `flash_attn_func` → 修改模型代码, import 失败时静默跳过
+  - 安装缺失依赖: `addict`, `matplotlib`, `easydict`
+  - SGLang 批量推理测试: 14 页 PDF, 196.67 TPS, 68s wall time, 全部通过
+  - postprocess 测试: 生成 result.md + 图片目录
+  - LAN 网关部署: port 10001, CORS `*`, 全链路验证通过 (上传→推理→下载→删除)
+- **bugs.md**: 更新 07-26 条目 (sgl_kernel 架构、g++ 缺失、flash_attn 命名空间包)
+- **key_facts.md**: 更新启动命令速查
+
 ## 2026-07-01
 
 ### Live 烟雾测试：ninja PATH 修复 + 14 页 PDF 解析成功

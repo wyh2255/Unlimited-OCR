@@ -38,7 +38,8 @@ The **fork-specific additions** live in the rest of the repo and are documented 
 
 | Addition | What it does | Where to start |
 |----------|--------------|----------------|
-| LAN HTTP gateway | Serve the model over the network so multiple laptops can share one GPU | `python -m gateway.server --port 10001` (see [`README_API.md`](README_API.md) 中文) |
+| **One-click deployment scripts** | Fresh clone → usable service in 3 commands (`setup_env.sh` / `start_server.sh` / `stop_server.sh`) | **[§ One-click deployment](#one-click-deployment-a100-server-branch)** below |
+| LAN HTTP gateway | Serve the model over the network so multiple laptops can share one GPU | `./start_server.sh` (details: [`README_API.md`](README_API.md) 中文) |
 | CLI client | Talk to the gateway from a laptop that has no GPU | `ocr-client upload my.pdf --watch` (或 `python -m ocr_client`) |
 | Browser frontend | Vue 3 SPA for non-technical users | `cd web && pnpm dev` (see [`web/README.md`](web/README.md) 中文) |
 | `ocr-client` pip package | Pre-bundled version of the CLI for `uv tool install` / `pipx install` | `uv tool install ./ocr-client` (see [`ocr-client/README.md`](ocr-client/README.md) 中文) |
@@ -48,6 +49,148 @@ The **fork-specific additions** live in the rest of the repo and are documented 
 | Changelog | List of local commits vs upstream | [`CHANGELOG.md`](CHANGELOG.md) |
 
 If you only want to use the model itself, follow the upstream "Inference" section below.
+
+---
+
+## One-click deployment (A100-server branch)
+
+**一键部署** —— 本分支把整套 OCR 服务打包成「局域网共享 GPU」模式：一台 GPU 服务器跑网关，
+其他电脑用 CLI / 浏览器提交 PDF、拿 Markdown 结果。**在新机器上从零到可用只需三条命令。**
+
+> 英文速览：clone branch → `bash scripts/setup_env.sh` → `./start_server.sh`。
+> 客户端见 §4；完整细节全部在下方中文手册中。
+
+### 0. 硬件与系统要求
+
+| 项目 | 要求 |
+|------|------|
+| GPU | NVIDIA 显卡，显存 ≥ 24 GB（实测 RTX 4090 24G / A100 40G）；并发随空闲显存自动分级 |
+| 驱动 | NVIDIA driver ≥ 550（`nvidia-smi` 可用即可） |
+| OS | Linux x86_64（Ubuntu 22.04/24.04 实测），需 root 或 sudo 装系统包 |
+| 磁盘 | ≥ 20 GB（模型权重 ~6.4 GB + venv ~10 GB + 任务产物） |
+| 网络 | 服务器需能访问 HuggingFace（仅首次下载模型时；离线机见下方 FAQ） |
+
+### 1. 拉代码 → 一键装环境（首次约 10–20 分钟）
+
+```bash
+git clone -b A100-server https://github.com/wyh2255/Unlimited-OCR.git
+cd Unlimited-OCR
+bash scripts/setup_env.sh
+```
+
+脚本幂等，重复执行安全。它会自动完成：
+
+1. 装系统包 `libnuma-dev g++ ninja-build`（缺了它们 sgl_kernel / JIT 编译必挂）
+2. 创建 `.venv`（uv 管理，Python 3.12）
+3. 安装**仓库内置的 sglang 定制 wheel**（`wheel/sglang-*.whl`，含本模型的自定义
+   logit processor 补丁——严禁换成 PyPI 版 sglang）+ `requirements-api.txt`
+4. 检查模型权重：缺失则自动从 HuggingFace 下载 `baidu/Unlimited-OCR` (~6.4 GB)
+   到 `./Unlimited-OCR/`（模型不入 git）
+5. 逐项验证 torch / sglang / pymupdf / fastapi import
+
+### 2. 一键启动（后台守护）
+
+```bash
+./start_server.sh
+```
+
+输出形如：
+
+```
+网关已就绪: http://<服务器LAN IP>:10001  (PID 24728)
+Token: <自动生成或复用 ~/.ocr_token 中的值>
+日志: tail -f log/api_server.log
+验证: curl -s http://127.0.0.1:10001/api/v1/health
+```
+
+- **幂等**：已在运行则直接提示退出；端口被非网关进程占用会报错并给排查命令。
+- **Token**：优先 `$OCR_API_TOKEN` > `~/.ocr_token`（已有则复用）> 自动生成并持久化
+  （chmod 600）。重启不变，除非你删掉 `~/.ocr_token`。
+- **开机自启（可选）**：`crontab -e` 加一行
+  `@reboot cd /root/Unlimited-OCR && ./start_server.sh >> log/boot.log 2>&1`
+- 前台调试（看 SGLang 启动全过程）：`./start_gateway.sh`，Ctrl+C 停止。
+
+### 3. 验证服务
+
+```bash
+# 服务器本机 —— 无需 token
+curl -s http://127.0.0.1:10001/api/v1/health | python3 -m json.tool
+# 期望: status=ok + 本机 GPU 型号/空闲显存/推荐并发
+
+# 局域网其他电脑 —— 带 token
+curl -s -H "Authorization: Bearer <你的token>" http://<服务器IP>:10001/api/v1/tasks/x
+# 期望: HTTP 404 （说明鉴权通过、404 路径正常）
+
+# 不带 token 访问受保护接口
+curl -s -o /dev/null -w '%{http_code}\n' http://<服务器IP>:10001/api/v1/tasks/x
+# 期望: 401
+```
+
+> SGLang 推理引擎是**懒启动**：网关起来后 GPU 显存占用仍很低，
+> 第一个任务到达时才拉起 SGLang（首次约 30–40 s 预热），属正常现象。
+
+### 4. 客户端使用（任意一台无 GPU 的电脑）
+
+```bash
+# 方式 A：CLI 客户端（推荐，纯 HTTP，无需 GPU）
+pip install clients/python-cli        # 在克隆的本仓库里执行
+export OCR_SERVER="http://<服务器IP>:10001"
+export OCR_API_TOKEN="<你的token>"    # 服务器上 cat ~/.ocr_token
+
+ocr-client health                     # 连通性检查
+ocr-client upload paper.pdf --watch   # 上传→进度条→自动下载解压
+# 结果在 ./paper/ 下: result.md + images/*.jpg
+
+ocr-client status <task_id>           # 查询任务
+ocr-client download <task_id> --out . # 手动下载 zip 并解压
+ocr-client delete <task_id>           # 删除任务及服务器端磁盘
+
+# 方式 B：浏览器（适合非技术用户）
+cd clients/web && pnpm install && pnpm dev   # 打开 http://127.0.0.1:5173
+# 右上角设置服务器地址和 token，拖入 PDF 即可
+```
+
+更多细节见 [`README_API.md`](README_API.md)（CLI/API 全量手册）、
+[`clients/web/README.md`](clients/web/README.md)（前端手册）、
+[`API_CONTRACT.md`](API_CONTRACT.md)（HTTP 协议契约）。
+
+### 5. 日常运维速查
+
+```bash
+./stop_server.sh            # 优雅停止（SIGTERM，等 15s 后兜底 SIGKILL）
+./start_server.sh           # 启动/重启（改完代码或配置后先 stop 再 start）
+tail -f log/api_server.log                    # 网关日志
+tail -f api_workdir/logs/<task_id>_sglang.log # 某任务的 SGLang 日志
+watch -n 2 nvidia-smi                         # GPU 占用实时监控
+```
+
+服务器磁盘布局（默认 `--workdir ./api_workdir`）：
+`tmp/<task_id>/`（任务中转，完成即删）、`outputs/<task_id>.zip`（结果，DELETE 时清）、
+`logs/<task_id>_sglang.log`（推理日志，DELETE 时清）。
+
+### 6. 常见问题（FAQ）
+
+| 症状 | 原因与解决 |
+|------|-----------|
+| `FileNotFoundError: 'ninja'` | 启动时没走 `.venv/bin`。**必须用 `./start_server.sh`**（内部已 activate）；手动启动请先 `source .venv/bin/activate` |
+| `Could not load any common_ops library!` | sgl_kernel 只有 sm90/sm100 变体。RTX 4090 (sm89) 需 `SGL_KERNEL_ARCH=90`（脚本已默认设置）；A100 无需理会 |
+| sgl_kernel 报 `libnuma.so.1` 缺失 | `apt-get install -y libnuma-dev g++ ninja-build`（setup_env.sh 已自动处理） |
+| JIT 编译报 `cannot execute 'cc1plus'` | 同上，缺 g++ |
+| 模型下载不动 / 离线机器 | 有网的机器上 `hf download baidu/Unlimited-OCR --local-dir Unlimited-OCR` 后整个目录拷过去；或启动时 `MODEL_DIR=baidu/Unlimited-OCR ./start_server.sh` 直接读 HF ID |
+| 401 Unauthorized | token 不对。以服务器上 `~/.ocr_token` 为准；多用户模式见 `README_API.md` |
+| 端口被占 | `ps -ef | grep gateway.server` 找残留进程 kill 掉，再 `./start_server.sh` |
+
+### 可调环境变量一览（`start_server.sh` 均支持同名覆盖）
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `PORT` | `10001` | 网关监听端口 |
+| `HOST` | `0.0.0.0` | 监听地址 |
+| `GPU` | `0` | CUDA_VISIBLE_DEVICES 值 |
+| `MODEL_DIR` | `./Unlimited-OCR` | 本地权重目录或 HuggingFace ID |
+| `SGL_KERNEL_ARCH` | `90` | sgl_kernel 架构强制项（RTX 4090 必须；A100 可设 80） |
+| `CUDA_HOME` | `/usr/local/cuda` | nvcc 路径 |
+| `OCR_API_TOKEN` | 自动生成 | API Bearer token |
 
 ---
 

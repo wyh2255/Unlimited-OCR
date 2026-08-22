@@ -49,6 +49,8 @@ Unlimited-OCR/
 outputs_clean/
 ocr_output_Unlimited-OCR/
 ocr_output_*/
+test_output/
+test_output_clean/
 
 # Test artifacts (uploaded task ZIPs that get re-downloaded)
 f[0-9a-f]*.zip
